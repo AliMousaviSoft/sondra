@@ -1,0 +1,158 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/AliMousaviSoft/sondra/internal/config"
+	"github.com/AliMousaviSoft/sondra/internal/report"
+	"github.com/AliMousaviSoft/sondra/internal/runner"
+	"github.com/AliMousaviSoft/sondra/internal/tui"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
+func main() {
+	root := buildRoot()
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func buildRoot() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "sondra",
+		Short:         "sondra — automated bug bounty recon pipeline",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	root.AddCommand(buildScan(), buildReport(), buildDiff(), buildVersion())
+	return root
+}
+
+func buildScan() *cobra.Command {
+	var (
+		domain   string
+		preset   string
+		excluded []string
+		yes      bool
+		cfgFile  string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "scan",
+		Short: "Run recon pipeline against a domain",
+		Example: `  sondra scan -d target.com
+  sondra scan -d target.com -p quick
+  sondra scan -d target.com -y`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(cfgFile, domain, excluded, preset, yes)
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+			cfg.Version = version
+
+			m := tui.NewModel(cfg)
+			r := runner.New(cfg, m.LogCh(), m.ProgressCh())
+			m.SetRunner(r)
+
+			// -y: build the module list now and skip the selector entirely.
+			if cfg.SkipSelector {
+				r.Build(cfg.Modules)
+				m.StartImmediate()
+			}
+
+			p := tea.NewProgram(m, tea.WithAltScreen())
+			if _, err := p.Run(); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&domain, "domain", "d", "", "Target domain (required)")
+	cmd.Flags().StringVarP(&preset, "preset", "p", "full", "Preset: full|quick|passive|enum|vuln")
+	cmd.Flags().StringArrayVarP(&excluded, "exclude", "e", nil, "Subdomains to exclude")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive module selector")
+	cmd.Flags().StringVar(&cfgFile, "config", "", "Config file (default: ~/.sondra.yaml)")
+	_ = cmd.MarkFlagRequired("domain")
+
+	viper.BindPFlag("domain", cmd.Flags().Lookup("domain"))    //nolint:errcheck
+	viper.BindPFlag("preset", cmd.Flags().Lookup("preset"))    //nolint:errcheck
+	viper.BindPFlag("excluded", cmd.Flags().Lookup("exclude")) //nolint:errcheck
+
+	return cmd
+}
+
+func buildReport() *cobra.Command {
+	var (
+		domain string
+		dir    string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "report",
+		Short: "Regenerate HTML report for a completed scan",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load("", domain, nil, "", true)
+			if err != nil {
+				return err
+			}
+			if dir != "" {
+				cfg.OutputDir = dir
+			}
+			return report.Generate(cfg)
+		},
+	}
+
+	cmd.Flags().StringVarP(&domain, "domain", "d", "", "Target domain (required)")
+	cmd.Flags().StringVar(&dir, "dir", "", "Specific run directory to use")
+	_ = cmd.MarkFlagRequired("domain")
+	return cmd
+}
+
+func buildDiff() *cobra.Command {
+	var domain string
+
+	cmd := &cobra.Command{
+		Use:   "diff",
+		Short: "Show new subdomains between the last two runs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			newSubs, err := report.DiffRuns(domain)
+			if err != nil {
+				return err
+			}
+			if len(newSubs) == 0 {
+				fmt.Println("No new subdomains found (or only one run exists).")
+				return nil
+			}
+			fmt.Printf("New subdomains since last run (%d):\n", len(newSubs))
+			for _, s := range newSubs {
+				fmt.Println(" +", s)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&domain, "domain", "d", "", "Target domain (required)")
+	_ = cmd.MarkFlagRequired("domain")
+	return cmd
+}
+
+func buildVersion() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("sondra %s (commit: %s, built: %s)\n", version, commit, date)
+		},
+	}
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/AliMousaviSoft/sondra/internal/report"
 	"github.com/AliMousaviSoft/sondra/internal/runner"
 	"github.com/AliMousaviSoft/sondra/internal/tui"
+	"github.com/AliMousaviSoft/sondra/internal/updater"
 )
 
 var (
@@ -34,7 +36,7 @@ func buildRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(buildScan(), buildReport(), buildDiff(), buildVersion())
+	root.AddCommand(buildScan(), buildReport(), buildDiff(), buildVersion(), buildUpdate())
 	return root
 }
 
@@ -54,6 +56,10 @@ func buildScan() *cobra.Command {
   sondra scan -d target.com -p quick
   sondra scan -d target.com -y`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Show banner with async version check.
+			latest := updater.LatestVersion(context.Background())
+			fmt.Println(tui.RenderBanner(version, latest))
+
 			cfg, err := config.Load(cfgFile, domain, excluded, preset, yes)
 			if err != nil {
 				return fmt.Errorf("config: %w", err)
@@ -64,7 +70,6 @@ func buildScan() *cobra.Command {
 			r := runner.New(cfg, m.LogCh(), m.ProgressCh())
 			m.SetRunner(r)
 
-			// -y: build the module list now and skip the selector entirely.
 			if cfg.SkipSelector {
 				r.Build(cfg.Modules)
 				m.StartImmediate()
@@ -152,7 +157,31 @@ func buildVersion() *cobra.Command {
 		Use:   "version",
 		Short: "Print version information",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("sondra %s (commit: %s, built: %s)\n", version, commit, date)
+			latest := updater.LatestVersion(context.Background())
+			fmt.Println(tui.RenderBanner(version, latest))
+			fmt.Printf("version : %s\n", version)
+			fmt.Printf("commit  : %s\n", commit)
+			fmt.Printf("built   : %s\n", date)
+		},
+	}
+}
+
+func buildUpdate() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Update sondra to the latest version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Checking for updates...")
+			latest := updater.LatestVersion(context.Background())
+			if latest == "" {
+				fmt.Println("Could not reach GitHub — check your connection.")
+				return
+			}
+			if version == latest {
+				fmt.Printf("Already on latest version: v%s\n", version)
+				return
+			}
+			updater.DoUpdate(latest)
 		},
 	}
 }

@@ -69,24 +69,23 @@ func RunProbe(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) 
 		return Result{Name: "httpx probe", Error: fmt.Errorf("phase1: %w", err)}
 	}
 
+	// Strip status codes from live.txt in-place.
+	// live.txt is used by gowitness, naabu, katana — all need clean URLs.
+	if err := stripStatusCodes(liveFile, liveFile); err != nil {
+		return Result{Name: "httpx probe", Error: err}
+	}
+
 	liveCount := countLines(liveFile)
 	if liveCount == 0 {
 		return Result{Name: "httpx probe", Error: fmt.Errorf("no live hosts found")}
 	}
 	sendLog(log, tui.LogSuccess, "httpx", fmt.Sprintf("phase 1: %d alive hosts", liveCount))
 
-	// Strip " [200]" suffixes so phase2 gets clean URLs.
-	cleanLive := liveFile + ".clean"
-	if err := stripStatusCodes(liveFile, cleanLive); err != nil {
-		return Result{Name: "httpx probe", Error: err}
-	}
-	defer os.Remove(cleanLive)
-
-	// ── Phase 2: enrichment ───────────────────────────────────────────────
+	// ── Phase 2: enrichment on live hosts ─────────────────────────────────
 	sendLog(log, tui.LogInfo, "httpx", "phase 2: enrichment (title, tech, status)…")
 
 	phase2Args := []string{
-		"-l", cleanLive,
+		"-l", liveFile,
 		"-o", jsonFile,
 		"-json",
 		"-silent",
@@ -135,6 +134,9 @@ func runHTTPX(ctx context.Context, args []string) error {
 	return nil
 }
 
+// stripStatusCodes strips httpx status code suffixes from URLs.
+// Handles in-place rewrite safely via temp file + rename.
+// "https://foo.com [200]" → "https://foo.com"
 func stripStatusCodes(inFile, outFile string) error {
 	lines, err := readLines(inFile)
 	if err != nil {
@@ -149,7 +151,11 @@ func stripStatusCodes(inFile, outFile string) error {
 			urls = append(urls, l)
 		}
 	}
-	return writeLines(outFile, urls)
+	tmp := outFile + ".tmp"
+	if err := writeLines(tmp, urls); err != nil {
+		return err
+	}
+	return os.Rename(tmp, outFile)
 }
 
 func parseHTTPXJSONL(path string) []HostResult {

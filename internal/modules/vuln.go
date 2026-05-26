@@ -4,21 +4,21 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
-	"strings"
-	
+
 	"github.com/AliMousaviSoft/sondra/internal/config"
 	"github.com/AliMousaviSoft/sondra/internal/tui"
 )
 
 // ──────────────────────────────────────────────
-// Port scan (naabu — Go lib)
+// Port scan (naabu)
 // ──────────────────────────────────────────────
 
-// RunPorts runs naabu port scanner against live HTTP hosts.
 func RunPorts(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) Result {
 	start := time.Now()
 	outFile := filepath.Join(cfg.OutputDir, "naabu-output", "open_ports.txt")
@@ -29,7 +29,6 @@ func RunPorts(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) 
 		return Result{Name: "port scan", Count: count, Output: outFile}
 	}
 
-	// Naabu needs bare hostnames, not URLs. Strip protocol from live.txt.
 	liveFile := filepath.Join(cfg.OutputDir, "live.txt")
 	hostsFile := filepath.Join(cfg.OutputDir, "naabu-output", "hosts.txt")
 
@@ -73,8 +72,8 @@ func RunPorts(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) 
 	}
 }
 
-// stripURLsToHosts reads a URL list and writes bare hostnames.
-// "https://api.hackerone.com [200]" → "api.hackerone.com"
+// stripURLsToHosts extracts bare hostnames from a URL list.
+// "https://api.hackerone.com" → "api.hackerone.com"
 func stripURLsToHosts(inFile, outFile string) error {
 	lines, err := readLines(inFile)
 	if err != nil {
@@ -84,18 +83,14 @@ func stripURLsToHosts(inFile, outFile string) error {
 	seen := make(map[string]struct{})
 	var hosts []string
 	for _, l := range lines {
-		// Strip status code suffix first: "https://foo.com [200]" → "https://foo.com"
 		if idx := strings.LastIndex(l, " ["); idx != -1 {
 			l = strings.TrimSpace(l[:idx])
 		}
-		// Strip protocol.
 		l = strings.TrimPrefix(l, "https://")
 		l = strings.TrimPrefix(l, "http://")
-		// Strip path if any.
 		if idx := strings.Index(l, "/"); idx != -1 {
 			l = l[:idx]
 		}
-		// Strip port if any.
 		if idx := strings.LastIndex(l, ":"); idx != -1 {
 			l = l[:idx]
 		}
@@ -110,11 +105,11 @@ func stripURLsToHosts(inFile, outFile string) error {
 	}
 	return writeLines(outFile, hosts)
 }
+
 // ──────────────────────────────────────────────
 // Screenshots (gowitness)
 // ──────────────────────────────────────────────
 
-// RunScreenshots takes screenshots of live hosts via gowitness.
 func RunScreenshots(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) Result {
 	start := time.Now()
 	screenshotDir := filepath.Join(cfg.OutputDir, "gowitness-output", "screenshots")
@@ -126,15 +121,15 @@ func RunScreenshots(ctx context.Context, cfg *config.Config, log chan<- tui.LogE
 
 	sendLog(log, tui.LogInfo, "gowitness", "capturing screenshots…")
 
-	// gowitness v3.x uses: gowitness scan file -f <list> --screenshot-path <dir>
 	cmd := exec.CommandContext(ctx, "gowitness",
 		"scan", "file",
 		"-f", liveFile,
 		"--screenshot-path", screenshotDir,
-		"--write-none",   // don't write DB for screenshots
-		"--no-http",      // only HTTPS if target is HTTPS
+		"--write-none",
 		"--threads", "4",
 		"--timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
+		"--screenshot-format", "png",
+		"-q",
 	)
 
 	var stderr bytes.Buffer
@@ -163,7 +158,6 @@ func RunScreenshots(ctx context.Context, cfg *config.Config, log chan<- tui.LogE
 // URL collection (gau + katana)
 // ──────────────────────────────────────────────
 
-// RunURLCollection collects URLs via gau (passive) and katana (active crawl).
 func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) Result {
 	start := time.Now()
 	allURLs := filepath.Join(cfg.OutputDir, "wayback-data", "all_urls.txt")
@@ -184,7 +178,6 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// ── gau ───────────────────────────────────────────────────────────────
 	if cfg.Modules.Gau {
 		wg.Add(1)
 		go func() {
@@ -200,7 +193,6 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 		}()
 	}
 
-	// ── katana ────────────────────────────────────────────────────────────
 	if cfg.Modules.Katana {
 		wg.Add(1)
 		go func() {
@@ -218,7 +210,6 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 
 	wg.Wait()
 
-	// Dedup and classify.
 	if err := deduplicateAndClassify(cfg, allLines, allURLs); err != nil {
 		return Result{Name: "url collection", Error: err}
 	}
@@ -236,12 +227,24 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 }
 
 func runGau(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) ([]string, error) {
-	if _, err := exec.LookPath("gau"); err != nil {
-		return nil, fmt.Errorf("gau not in PATH")
+	// Resolve binary directly — avoids shell alias conflicts (e.g. gau aliased to git add --update).
+	gauBin := ""
+	for _, candidate := range []string{
+		filepath.Join(os.Getenv("HOME"), "go/bin/gau"),
+		"/usr/local/bin/gau",
+		"/usr/bin/gau",
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			gauBin = candidate
+			break
+		}
+	}
+	if gauBin == "" {
+		return nil, fmt.Errorf("gau binary not found — install: go install github.com/lc/gau/v2/cmd/gau@latest")
 	}
 
 	gauFile := filepath.Join(cfg.OutputDir, "wayback-data", "gau.txt")
-	cmd := exec.CommandContext(ctx, "gau",
+	cmd := exec.CommandContext(ctx, gauBin,
 		"--threads", "5",
 		"--timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
 		"--o", gauFile,
@@ -271,8 +274,8 @@ func runKatana(ctx context.Context, cfg *config.Config, liveFile string, log cha
 	cmd := exec.CommandContext(ctx, "katana",
 		"-list", liveFile,
 		"-depth", "3",
-		"-jc",    // JS crawling
-		"-kf", "all", // known files
+		"-jc",
+		"-kf", "all",
 		"-c", fmt.Sprintf("%d", cfg.Concurrency/2),
 		"-timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
 		"-o", katanaFile,
@@ -294,7 +297,6 @@ func runKatana(ctx context.Context, cfg *config.Config, liveFile string, log cha
 	return lines, nil
 }
 
-// deduplicateAndClassify deduplicates URLs and writes classified output files.
 func deduplicateAndClassify(cfg *config.Config, urls []string, allURLsFile string) error {
 	seen := make(map[string]struct{}, len(urls))
 	var unique []string
@@ -311,11 +313,10 @@ func deduplicateAndClassify(cfg *config.Config, urls []string, allURLsFile strin
 
 	dir := filepath.Join(cfg.OutputDir, "wayback-data")
 	classify := map[string]func(string) bool{
-		"js_urls.txt":        func(u string) bool { return matchExt(u, ".js") },
-		"php_urls.txt":       func(u string) bool { return matchExt(u, ".php") },
-		"aspx_urls.txt":      func(u string) bool { return matchExt(u, ".aspx", ".asp") },
-		"endpoints.txt":      func(u string) bool { return hasParam(u) },
-		"param_wordlist.txt": extractParam,
+		"js_urls.txt":   func(u string) bool { return matchExt(u, ".js") },
+		"php_urls.txt":  func(u string) bool { return matchExt(u, ".php") },
+		"aspx_urls.txt": func(u string) bool { return matchExt(u, ".aspx", ".asp") },
+		"endpoints.txt": func(u string) bool { return hasParam(u) },
 	}
 
 	for file, filterFn := range classify {
@@ -335,7 +336,6 @@ func deduplicateAndClassify(cfg *config.Config, urls []string, allURLsFile strin
 // Nuclei
 // ──────────────────────────────────────────────
 
-// RunNuclei runs nuclei crit/high (blocking) and optionally medium (background).
 func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry, bgWg *sync.WaitGroup) error {
 	if _, err := exec.LookPath("nuclei"); err != nil {
 		sendLog(log, tui.LogWarn, "nuclei", "nuclei not in PATH — skipping")
@@ -345,7 +345,6 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 	liveFile := filepath.Join(cfg.OutputDir, "live.txt")
 	templates := buildTemplateDirs(cfg.NucleiTemplates)
 
-	// ── crit/high: blocking ───────────────────────────────────────────────
 	if cfg.Modules.NucleiHigh {
 		sendLog(log, tui.LogInfo, "nuclei", "running crit/high templates (blocking)…")
 		outFile := filepath.Join(cfg.OutputDir, "nuclei-results", "crit_high.jsonl")
@@ -354,7 +353,6 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 		}
 	}
 
-	// ── takeover: blocking ────────────────────────────────────────────────
 	if cfg.Modules.Takeover {
 		sendLog(log, tui.LogInfo, "nuclei", "running takeover templates…")
 		takeoverFile := filepath.Join(cfg.OutputDir, "nuclei-results", "takeovers.txt")
@@ -363,7 +361,6 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 			allDomains, takeoverFile, log)
 	}
 
-	// ── medium: background goroutine tracked in caller's WaitGroup ────────
 	if cfg.Modules.NucleiMedium {
 		bgWg.Add(1)
 		go func() {
@@ -385,7 +382,6 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 	return nil
 }
 
-// runNucleiExec executes nuclei with the given severity filter.
 func runNucleiExec(ctx context.Context, cfg *config.Config,
 	templates []string, severity, inFile, outFile string,
 	log chan<- tui.LogEntry) error {
@@ -397,7 +393,7 @@ func runNucleiExec(ctx context.Context, cfg *config.Config,
 		"-jsonl",
 		"-silent",
 		"-no-color",
-		"-rate-limit", fmt.Sprintf("%d", cfg.RateLimit/3), // be polite
+		"-rate-limit", fmt.Sprintf("%d", cfg.RateLimit/3),
 		"-c", fmt.Sprintf("%d", cfg.Concurrency/4),
 		"-timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
 	}
@@ -411,7 +407,6 @@ func runNucleiExec(ctx context.Context, cfg *config.Config,
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// nuclei exits non-zero even on no findings — check stderr.
 		if stderr.Len() > 0 {
 			return fmt.Errorf("nuclei (%s): %w — %s", severity, err, stderr.String())
 		}
@@ -426,7 +421,6 @@ func runNucleiExec(ctx context.Context, cfg *config.Config,
 	return nil
 }
 
-// buildTemplateDirs returns the nuclei template paths to use.
 func buildTemplateDirs(base string) []string {
 	preferred := []string{
 		"http/cves",
@@ -446,7 +440,7 @@ func buildTemplateDirs(base string) []string {
 	}
 
 	if len(found) == 0 {
-		return []string{base} // fallback: entire templates dir
+		return []string{base}
 	}
 	return found
 }

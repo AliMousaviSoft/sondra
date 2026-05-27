@@ -123,7 +123,7 @@ func runMassdns(ctx context.Context, cfg *config.Config, wordlist, outFile strin
 		"-r", resolvers,
 		"-t", "A",
 		"-o", "S",
-		"--output", rawOut,
+		"-w", rawOut,
 		wordlist,
 	)
 

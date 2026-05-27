@@ -1,0 +1,3 @@
+mta-sts.forwarding.hackerone.com
+docs.hackerone.com
+hackerone.com

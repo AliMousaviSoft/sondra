@@ -1,0 +1,3 @@
+https://mta-sts.forwarding.hackerone.com
+https://docs.hackerone.com
+https://hackerone.com

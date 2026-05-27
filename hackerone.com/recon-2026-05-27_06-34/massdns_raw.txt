@@ -1,0 +1,8 @@
+mta-sts.hackerone.com. CNAME hacker0x01.github.io.
+mta-sts.forwarding.hackerone.com. CNAME hacker0x01.github.io.
+api.hackerone.com. A 104.18.36.214
+api.hackerone.com. A 172.64.151.42
+www.hackerone.com. A 104.18.36.214
+www.hackerone.com. A 172.64.151.42
+docs.hackerone.com. A 104.18.36.214
+docs.hackerone.com. A 172.64.151.42

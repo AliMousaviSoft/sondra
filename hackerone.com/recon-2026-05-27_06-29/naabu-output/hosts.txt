@@ -1,0 +1,4 @@
+api.hackerone.com
+mta-sts.hackerone.com
+hackerone.com
+docs.hackerone.com

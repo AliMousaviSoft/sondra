@@ -1,4 +1,0 @@
-https://api.hackerone.com
-https://mta-sts.hackerone.com
-https://hackerone.com
-https://docs.hackerone.com

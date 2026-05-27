@@ -1,4 +1,0 @@
-api.hackerone.com:8080
-api.hackerone.com:8443
-hackerone.com:8080
-docs.hackerone.com:8080

@@ -85,7 +85,7 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 				return nil, fmt.Errorf("config file error: %w", err)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "DEBUG config=%s resolvers=%s\n", v.ConfigFileUsed(), v.GetString("resolvers_file"))
+		// fmt.Fprintf(os.Stderr, "DEBUG config=%s resolvers=%s\n", v.ConfigFileUsed(), v.GetString("resolvers_file"))
 
 	// ── env vars ──────────────────────────────────────────────────────────
 	v.SetEnvPrefix("SONDRA")

@@ -273,7 +273,7 @@ func runKatana(ctx context.Context, cfg *config.Config, liveFile string, log cha
 	katanaFile := filepath.Join(cfg.OutputDir, "wayback-data", "katana.txt")
 	cmd := exec.CommandContext(ctx, "katana",
 		"-list", liveFile,
-		"-depth", "3",
+		"-depth", "2",          // was 3
 		"-jc",
 		"-kf", "all",
 		"-c", fmt.Sprintf("%d", cfg.Concurrency/2),
@@ -281,6 +281,10 @@ func runKatana(ctx context.Context, cfg *config.Config, liveFile string, log cha
 		"-o", katanaFile,
 		"-silent",
 		"-no-color",
+		"-fs", "fqdn",          // scope: stay on same FQDN only
+		"-duc",                 // disable update check
+		"-rl", "50",            // rate limit: 50 req/sec max
+		"-ct", "30",            // crawl duration timeout: 30 seconds per host
 	)
 
 	var stderr bytes.Buffer

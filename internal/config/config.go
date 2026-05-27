@@ -65,33 +65,27 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 	v.SetDefault("output_base", ".")
 
 	// ── config files ──────────────────────────────────────────────────────
-	v.SetConfigType("yaml")
-
-	if cfgFile != "" {
-		v.SetConfigFile(cfgFile)
-	} else {
-		// Project-local first, then user home — viper reads the first found.
-		v.AddConfigPath(".")
+		v.SetConfigType("yaml")
 		v.SetConfigName(".sondra")
-		if err := v.ReadInConfig(); err == nil {
-			// local config loaded
-		}
 
-		// Home config (may override local defaults if keys differ).
-		home, err := os.UserHomeDir()
-		if err == nil {
-			v2 := viper.New()
-			v2.SetConfigType("yaml")
-			v2.SetConfigFile(filepath.Join(home, ".sondra.yaml"))
-			if err := v2.ReadInConfig(); err == nil {
-				for _, k := range v2.AllKeys() {
-					if !v.IsSet(k) {
-						v.Set(k, v2.Get(k))
-					}
-				}
+		if cfgFile != "" {
+			v.SetConfigFile(cfgFile)
+		} else {
+			// Let viper search in order: current dir first, then home.
+			// First match wins.
+			v.AddConfigPath(".")
+			if home, err := os.UserHomeDir(); err == nil {
+				v.AddConfigPath(home)
 			}
 		}
-	}
+
+		// Ignore "not found" — defaults cover missing config.
+		if err := v.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("config file error: %w", err)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "DEBUG config=%s resolvers=%s\n", v.ConfigFileUsed(), v.GetString("resolvers_file"))
 
 	// ── env vars ──────────────────────────────────────────────────────────
 	v.SetEnvPrefix("SONDRA")
@@ -114,6 +108,9 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 	}
 	outputDir := buildOutputDir(v.GetString("output_base"), domain)
 
+	// fmt.Println("Config file used:", v.ConfigFileUsed())
+	// fmt.Printf("DEBUG resolvers_file raw: '%s'\n", v.GetString("resolvers_file"))
+	// fmt.Printf("DEBUG all keys: %+v\n", v.AllKeys())
 	// ── assemble config ───────────────────────────────────────────────────
 	cfg := &Config{
 		Domain:          domain,

@@ -213,7 +213,7 @@ type crtshEntry struct {
 func queryCrtsh(ctx context.Context, domain string) ([]string, error) {
 	apiURL := "https://crt.sh/?q=%25." + url.QueryEscape(domain) + "&output=json"
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 45 * time.Second}
 
 	var body []byte
 	var lastErr error

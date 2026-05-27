@@ -89,6 +89,9 @@ func (m *Model) SetRunner(r Runner)            { m.runner = r }
 func (m *Model) StartImmediate() {
 	m.state = StateRunning
 	m.start = time.Now()
+	// Initialize with safe defaults — will be resized on first WindowSizeMsg.
+	m.logView = viewport.New(80, 24)
+	m.logView.SetContent("")
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -144,7 +147,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logContent += renderLogEntry(entry) + "\n"
 		m.logMu.Unlock()
 		m.logView.SetContent(m.logContent)
-		m.logView.GotoBottom()
+		if m.logView.Height > 0 {
+			m.logView.GotoBottom()
+		}
 		cmds = append(cmds, listenLog(m.logCh))
 
 	case stepUpdateMsg:

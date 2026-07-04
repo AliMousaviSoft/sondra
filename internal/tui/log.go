@@ -22,6 +22,22 @@ const (
 	LogDebug            // muted — verbose output
 )
 
+// String returns the lowercase level name (used by headless/JSON output).
+func (l LogLevel) String() string {
+	switch l {
+	case LogSuccess:
+		return "success"
+	case LogWarn:
+		return "warn"
+	case LogError:
+		return "error"
+	case LogDebug:
+		return "debug"
+	default:
+		return "info"
+	}
+}
+
 // LogEntry is a single structured log line.
 type LogEntry struct {
 	Time    time.Time
@@ -80,6 +96,11 @@ func levelPrefix(l LogLevel) string {
 		return styleLevelInfo.Render("›")
 	}
 }
+
+// RenderLogLine formats a LogEntry for non-TUI (headless) stdout. lipgloss
+// auto-detects the terminal, so output is colored interactively and plain when
+// piped/redirected — keeping headless and TUI rendering identical.
+func RenderLogLine(e LogEntry) string { return renderLogEntry(e) }
 
 // renderLogEntry formats a single LogEntry into a display string.
 // Format: HH:MM:SS  step_name  ✓ message

@@ -5,9 +5,9 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/AliMousaviSoft/sondra/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/AliMousaviSoft/sondra/internal/config"
 )
 
 // ──────────────────────────────────────────────
@@ -95,7 +95,7 @@ func (s SelectorModel) Update(msg tea.KeyMsg) (SelectorModel, tea.Cmd, bool) {
 	case "f":
 		applyPreset(s.items, config.PresetModules("full"))
 	case "1":
-    	applyPreset(s.items, config.PresetModules("full"))
+		applyPreset(s.items, config.PresetModules("full"))
 	case "2":
 		applyPreset(s.items, config.PresetModules("quick"))
 	case "3":
@@ -276,14 +276,14 @@ func (s SelectorModel) View() string {
 
 func defaultModuleItems() []ModuleItem {
 	return []ModuleItem{
-		{ID: "subfinder", Name: "subfinder", Description: "passive subdomain enum via APIs", Binary: ""},         // Go lib
+		{ID: "subfinder", Name: "subfinder", Description: "passive subdomain enum via APIs", Binary: ""}, // Go lib
 		{ID: "assetfinder", Name: "assetfinder", Description: "cert transparency + web archives", Binary: "assetfinder"},
-		{ID: "crtsh", Name: "crt.sh", Description: "certificate transparency HTTP query", Binary: ""},            // HTTP call
+		{ID: "crtsh", Name: "crt.sh", Description: "certificate transparency HTTP query", Binary: ""}, // HTTP call
 		{ID: "alterx", Name: "alterx", Description: "permutation-based subdomain generation", Binary: "alterx"},
 		{ID: "massdns", Name: "massdns", Description: "high-speed DNS brute force", Binary: "massdns"},
-		{ID: "httpx", Name: "httpx", Description: "2-phase probe: alive check + enrichment", Binary: ""},        // Go lib
+		{ID: "httpx", Name: "httpx", Description: "2-phase probe: alive check + enrichment", Binary: ""}, // Go lib
 		{ID: "takeover", Name: "nuclei takeover", Description: "subdomain takeover fingerprinting", Binary: "nuclei"},
-		{ID: "naabu", Name: "naabu", Description: "port scanner for non-standard ports", Binary: ""},            // Go lib
+		{ID: "naabu", Name: "naabu", Description: "port scanner for non-standard ports", Binary: ""}, // Go lib
 		{ID: "gau", Name: "gau", Description: "URL collection from Wayback / CommonCrawl", Binary: "gau"},
 		{ID: "katana", Name: "katana", Description: "active crawl + JS endpoint extraction", Binary: "katana"},
 		{ID: "gowitness", Name: "gowitness", Description: "headless screenshots of live hosts", Binary: "gowitness"},
@@ -295,18 +295,18 @@ func defaultModuleItems() []ModuleItem {
 // applyPreset marks items selected/deselected according to ModuleFlags.
 func applyPreset(items []ModuleItem, mods config.ModuleFlags) {
 	flagMap := map[string]bool{
-		"subfinder":    mods.Subfinder,
-		"assetfinder":  mods.Assetfinder,
-		"crtsh":        mods.Crtsh,
-		"alterx":       mods.Alterx,
-		"massdns":      mods.Massdns,
-		"httpx":        mods.Httpx,
-		"takeover":     mods.Takeover,
-		"naabu":        mods.Naabu,
-		"gau":          mods.Gau,
-		"katana":       mods.Katana,
-		"gowitness":    mods.Gowitness,
-		"nuclei_high":  mods.NucleiHigh,
+		"subfinder":     mods.Subfinder,
+		"assetfinder":   mods.Assetfinder,
+		"crtsh":         mods.Crtsh,
+		"alterx":        mods.Alterx,
+		"massdns":       mods.Massdns,
+		"httpx":         mods.Httpx,
+		"takeover":      mods.Takeover,
+		"naabu":         mods.Naabu,
+		"gau":           mods.Gau,
+		"katana":        mods.Katana,
+		"gowitness":     mods.Gowitness,
+		"nuclei_high":   mods.NucleiHigh,
 		"nuclei_medium": mods.NucleiMedium,
 	}
 	for i := range items {

@@ -144,6 +144,8 @@ func (s SelectorModel) SelectedModules() config.ModuleFlags {
 			mods.Gowitness = true
 		case "gau":
 			mods.Gau = true
+		case "gowayback":
+			mods.Gowayback = true
 		case "katana":
 			mods.Katana = true
 		case "nuclei_high":
@@ -285,6 +287,7 @@ func defaultModuleItems() []ModuleItem {
 		{ID: "takeover", Name: "nuclei takeover", Description: "subdomain takeover fingerprinting", Binary: "nuclei"},
 		{ID: "naabu", Name: "naabu", Description: "port scanner for non-standard ports", Binary: ""}, // Go lib
 		{ID: "gau", Name: "gau", Description: "URL collection from Wayback / CommonCrawl", Binary: "gau"},
+		{ID: "gowayback", Name: "gowaybackgo", Description: "Wayback CDX URLs (better coverage)", Binary: "gowaybackgo"},
 		{ID: "katana", Name: "katana", Description: "active crawl + JS endpoint extraction", Binary: "katana"},
 		{ID: "gowitness", Name: "gowitness", Description: "headless screenshots of live hosts", Binary: "gowitness"},
 		{ID: "nuclei_high", Name: "nuclei (crit/high)", Description: "targeted templates: cves, misconfig, exposures", Binary: "nuclei"},
@@ -304,6 +307,7 @@ func applyPreset(items []ModuleItem, mods config.ModuleFlags) {
 		"takeover":      mods.Takeover,
 		"naabu":         mods.Naabu,
 		"gau":           mods.Gau,
+		"gowayback":     mods.Gowayback,
 		"katana":        mods.Katana,
 		"gowitness":     mods.Gowitness,
 		"nuclei_high":   mods.NucleiHigh,

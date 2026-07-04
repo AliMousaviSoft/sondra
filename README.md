@@ -67,7 +67,8 @@ sondra monitor -d target.com --modules subfinder,crtsh,httpx   # custom module s
 `--modules` (also on `scan`) overrides the preset with an exact module list —
 e.g. watch for new live hosts without the slow nuclei phase. Valid modules:
 `subfinder, assetfinder, crtsh, alterx, massdns, httpx, takeover, naabu,
-gowitness, gau, katana, nuclei` (or granular `nuclei-high` / `nuclei-medium`).
+gowitness, gau, gowayback, katana, nuclei` (or granular `nuclei-high` /
+`nuclei-medium`). `gowayback` collects Wayback CDX URLs via gowaybackgo.
 Remember the pipeline order: downstream modules (`httpx`, `naabu`, `nuclei`)
 need an enum source (`subfinder`/`crtsh`/`assetfinder`) to have targets.
 
@@ -147,6 +148,7 @@ go install github.com/projectdiscovery/alterx/cmd/alterx@latest
 # Crawling + URL collection
 go install github.com/projectdiscovery/katana/cmd/katana@latest
 go install github.com/lc/gau/v2/cmd/gau@latest
+go install -v github.com/OoS-MaMaD/gowaybackgo@latest   # Wayback CDX (better coverage than gau/waybackurls)
 
 # Screenshots
 go install github.com/sensepost/gowitness@latest

@@ -179,18 +179,42 @@ func (r *Runner) notifyReconDone(elapsed time.Duration) {
 	r.dispatch(msg)
 }
 
-// dispatch sends a message best-effort. It intentionally uses a fresh
-// background context (not the run's ctx) so a cancelled/failed run can still
-// deliver its final notification, and never fails the scan on a delivery error.
+// dispatch delivers a message asynchronously and best-effort. It's async so a
+// slow/failed send (common mid-nuclei, when the scan saturates the link) never
+// blocks the pipeline or the finding tailer. Sends are tracked by notifyWg so
+// RunSync waits for them before returning — otherwise a headless process could
+// exit before the final notification lands. Uses a fresh background context
+// (not the run's ctx) so a cancelled/failed run still delivers its alert.
 func (r *Runner) dispatch(msg notify.Message) {
 	if r.notifier == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := r.notifier.Send(ctx, msg); err != nil {
-		r.log(tui.LogWarn, "notify", err.Error())
+	r.notifyWg.Add(1)
+	go func() {
+		defer r.notifyWg.Done()
+		r.sendWithRetry(msg)
+	}()
+}
+
+// sendWithRetry attempts delivery a few times with backoff, so a notification
+// dropped while nuclei is hammering the network gets another chance once traffic
+// ebbs. Logs a warning only after all attempts fail.
+func (r *Runner) sendWithRetry(msg notify.Message) {
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(time.Duration(i) * 3 * time.Second) // 3s, 6s backoff
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := r.notifier.Send(ctx, msg)
+		cancel()
+		if err == nil {
+			return
+		}
+		lastErr = err
 	}
+	r.log(tui.LogWarn, "notify", lastErr.Error())
 }
 
 func (r *Runner) footer() string {

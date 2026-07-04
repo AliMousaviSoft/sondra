@@ -27,22 +27,45 @@ type Config struct {
 	SkipSelector bool
 	// Preset is the module preset applied when SkipSelector is true or used as default selection.
 	Preset string
+	// Notify holds outbound notification settings (Discord/Telegram/webhook).
+	Notify NotifyConfig
+}
+
+// NotifyConfig configures where scan lifecycle events are delivered.
+type NotifyConfig struct {
+	Discord       string         // Discord incoming-webhook URL
+	Telegram      TelegramConfig // Telegram bot token + chat id
+	Webhook       string         // generic JSON webhook URL
+	MinSeverity   string         // lowest nuclei severity to list in summaries (critical|high|medium|low)
+	NotifyOnStart bool           // also send a message when a scan starts (default off)
+	OnlyNotable   bool           // only send the finish message when there's signal (findings/new subs/takeovers) or an error
+}
+
+// TelegramConfig holds Telegram Bot API credentials.
+type TelegramConfig struct {
+	Token  string
+	ChatID string
+}
+
+// Active reports whether at least one notification channel is configured.
+func (n NotifyConfig) Active() bool {
+	return n.Discord != "" || n.Webhook != "" || (n.Telegram.Token != "" && n.Telegram.ChatID != "")
 }
 
 // ModuleFlags controls which recon steps are active.
 type ModuleFlags struct {
-	Subfinder   bool
-	Assetfinder bool
-	Crtsh       bool
-	Alterx      bool
-	Massdns     bool
-	Httpx       bool
-	Takeover    bool
-	Naabu       bool
-	Gowitness   bool
-	Gau         bool
-	Katana      bool
-	NucleiHigh  bool
+	Subfinder    bool
+	Assetfinder  bool
+	Crtsh        bool
+	Alterx       bool
+	Massdns      bool
+	Httpx        bool
+	Takeover     bool
+	Naabu        bool
+	Gowitness    bool
+	Gau          bool
+	Katana       bool
+	NucleiHigh   bool
 	NucleiMedium bool
 }
 
@@ -63,29 +86,32 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 	v.SetDefault("resolvers_file", "")
 	v.SetDefault("nuclei_templates", nucleiDefaultTemplates())
 	v.SetDefault("output_base", ".")
+	v.SetDefault("notify.min_severity", "high")
+	v.SetDefault("notify.on_start", false)
+	v.SetDefault("notify.only_notable", false)
 
 	// ── config files ──────────────────────────────────────────────────────
-		v.SetConfigType("yaml")
-		v.SetConfigName(".sondra")
+	v.SetConfigType("yaml")
+	v.SetConfigName(".sondra")
 
-		if cfgFile != "" {
-			v.SetConfigFile(cfgFile)
-		} else {
-			// Let viper search in order: current dir first, then home.
-			// First match wins.
-			v.AddConfigPath(".")
-			if home, err := os.UserHomeDir(); err == nil {
-				v.AddConfigPath(home)
-			}
+	if cfgFile != "" {
+		v.SetConfigFile(cfgFile)
+	} else {
+		// Let viper search in order: current dir first, then home.
+		// First match wins.
+		v.AddConfigPath(".")
+		if home, err := os.UserHomeDir(); err == nil {
+			v.AddConfigPath(home)
 		}
+	}
 
-		// Ignore "not found" — defaults cover missing config.
-		if err := v.ReadInConfig(); err != nil {
-			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-				return nil, fmt.Errorf("config file error: %w", err)
-			}
+	// Ignore "not found" — defaults cover missing config.
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("config file error: %w", err)
 		}
-		// fmt.Fprintf(os.Stderr, "DEBUG config=%s resolvers=%s\n", v.ConfigFileUsed(), v.GetString("resolvers_file"))
+	}
+	// fmt.Fprintf(os.Stderr, "DEBUG config=%s resolvers=%s\n", v.ConfigFileUsed(), v.GetString("resolvers_file"))
 
 	// ── env vars ──────────────────────────────────────────────────────────
 	v.SetEnvPrefix("SONDRA")
@@ -124,6 +150,17 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 		NucleiTemplates: v.GetString("nuclei_templates"),
 		SkipSelector:    skipSelector,
 		Preset:          preset,
+		Notify: NotifyConfig{
+			Discord: v.GetString("notify.discord"),
+			Telegram: TelegramConfig{
+				Token:  v.GetString("notify.telegram.token"),
+				ChatID: v.GetString("notify.telegram.chat_id"),
+			},
+			Webhook:       v.GetString("notify.webhook"),
+			MinSeverity:   v.GetString("notify.min_severity"),
+			NotifyOnStart: v.GetBool("notify.on_start"),
+			OnlyNotable:   v.GetBool("notify.only_notable"),
+		},
 	}
 
 	// Apply preset to ModuleFlags when skipping the selector.
@@ -132,6 +169,56 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 	}
 
 	return cfg, nil
+}
+
+// ParseModules turns an explicit module list (e.g. []string{"subfinder","httpx"})
+// into ModuleFlags, overriding presets for fine-grained control. Unknown names
+// return an error. Note the modules form a pipeline: downstream modules (httpx,
+// naabu, nuclei) need an upstream enum source (subfinder/assetfinder/crtsh) to
+// have anything to work on.
+func ParseModules(names []string) (ModuleFlags, error) {
+	var m ModuleFlags
+	var unknown []string
+	for _, raw := range names {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "":
+			continue
+		case "subfinder":
+			m.Subfinder = true
+		case "assetfinder":
+			m.Assetfinder = true
+		case "crtsh", "crt.sh":
+			m.Crtsh = true
+		case "alterx":
+			m.Alterx = true
+		case "massdns":
+			m.Massdns = true
+		case "httpx", "probe":
+			m.Httpx = true
+		case "takeover", "takeovers":
+			m.Takeover = true
+		case "naabu", "ports":
+			m.Naabu = true
+		case "gowitness", "screenshots":
+			m.Gowitness = true
+		case "gau":
+			m.Gau = true
+		case "katana":
+			m.Katana = true
+		case "nuclei":
+			m.NucleiHigh, m.NucleiMedium = true, true
+		case "nuclei-high", "nucleihigh":
+			m.NucleiHigh = true
+		case "nuclei-medium", "nucleimedium":
+			m.NucleiMedium = true
+		default:
+			unknown = append(unknown, raw)
+		}
+	}
+	if len(unknown) > 0 {
+		return m, fmt.Errorf("unknown module(s): %s (valid: subfinder, assetfinder, crtsh, alterx, massdns, httpx, takeover, naabu, gowitness, gau, katana, nuclei, nuclei-high, nuclei-medium)", strings.Join(unknown, ", "))
+	}
+	return m, nil
 }
 
 // PresetModules returns ModuleFlags for a named preset.

@@ -64,6 +64,7 @@ type ModuleFlags struct {
 	Naabu        bool
 	Gowitness    bool
 	Gau          bool
+	Gowayback    bool
 	Katana       bool
 	NucleiHigh   bool
 	NucleiMedium bool
@@ -203,6 +204,8 @@ func ParseModules(names []string) (ModuleFlags, error) {
 			m.Gowitness = true
 		case "gau":
 			m.Gau = true
+		case "gowayback", "gowaybackgo", "wayback":
+			m.Gowayback = true
 		case "katana":
 			m.Katana = true
 		case "nuclei":
@@ -216,7 +219,7 @@ func ParseModules(names []string) (ModuleFlags, error) {
 		}
 	}
 	if len(unknown) > 0 {
-		return m, fmt.Errorf("unknown module(s): %s (valid: subfinder, assetfinder, crtsh, alterx, massdns, httpx, takeover, naabu, gowitness, gau, katana, nuclei, nuclei-high, nuclei-medium)", strings.Join(unknown, ", "))
+		return m, fmt.Errorf("unknown module(s): %s (valid: subfinder, assetfinder, crtsh, alterx, massdns, httpx, takeover, naabu, gowitness, gau, gowayback, katana, nuclei, nuclei-high, nuclei-medium)", strings.Join(unknown, ", "))
 	}
 	return m, nil
 }
@@ -248,7 +251,7 @@ func PresetModules(preset string) ModuleFlags {
 			Subfinder: true, Assetfinder: true, Crtsh: true,
 			Alterx: true, Massdns: true,
 			Httpx: true, Takeover: true, Naabu: true,
-			Gowitness: true, Gau: true, Katana: true,
+			Gowitness: true, Gau: true, Gowayback: true, Katana: true,
 			NucleiHigh: true, NucleiMedium: true,
 		}
 	}

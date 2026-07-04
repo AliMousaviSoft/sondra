@@ -195,6 +195,21 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 		}()
 	}
 
+	if cfg.Modules.Gowayback {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lines, err := runGoWayback(ctx, cfg, log)
+			if err != nil {
+				sendLog(log, tui.LogWarn, "gowaybackgo", err.Error())
+				return
+			}
+			mu.Lock()
+			allLines = append(allLines, lines...)
+			mu.Unlock()
+		}()
+	}
+
 	if cfg.Modules.Katana {
 		wg.Add(1)
 		go func() {
@@ -264,6 +279,40 @@ func runGau(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) ([
 		return nil, err
 	}
 	sendLog(log, tui.LogSuccess, "gau", fmt.Sprintf("%d URLs from Wayback/CommonCrawl", len(lines)))
+	return lines, nil
+}
+
+// runGoWayback collects Wayback Machine CDX URLs via gowaybackgo, excluding
+// common static assets. Preferred over gau/waybackurls for wayback coverage.
+func runGoWayback(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) ([]string, error) {
+	if _, err := exec.LookPath("gowaybackgo"); err != nil {
+		return nil, fmt.Errorf("gowaybackgo not in PATH — install: go install -v github.com/OoS-MaMaD/gowaybackgo@latest")
+	}
+
+	outFile := filepath.Join(cfg.OutputDir, "wayback-data", "gowaybackgo.txt")
+	cmd := exec.CommandContext(ctx, "gowaybackgo",
+		"-u", cfg.Domain,
+		"--exclude-defaults",
+		"-o", outFile,
+		"--rate", "10",
+		"--timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stdout = io.Discard // it also prints URLs to stdout; we read the file
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("gowaybackgo: %w — %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	lines, err := readLines(outFile)
+	if err != nil {
+		return nil, err
+	}
+	sendLog(log, tui.LogSuccess, "gowaybackgo", fmt.Sprintf("%d URLs from Wayback CDX", len(lines)))
 	return lines, nil
 }
 

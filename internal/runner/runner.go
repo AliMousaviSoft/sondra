@@ -26,6 +26,7 @@ type Runner struct {
 	steps      []StepDef // recon phase — fast, gates the initial report + alert
 	vulnSteps  []StepDef // vuln phase — slow (nuclei), runs after recon is delivered
 	bgWg       sync.WaitGroup
+	notifyWg   sync.WaitGroup // tracks in-flight async notifications
 	notifier   notify.Notifier
 }
 
@@ -72,7 +73,7 @@ func (r *Runner) Build(mods config.ModuleFlags) {
 	if mods.Gowitness {
 		add("screenshots", r.runScreenshots)
 	}
-	if mods.Gau || mods.Katana {
+	if mods.Gau || mods.Gowayback || mods.Katana {
 		add("url collection", r.runURLCollection)
 	}
 	// Nuclei is the slow phase — it runs AFTER recon results are reported so the
@@ -102,6 +103,10 @@ func (r *Runner) RunSync(parent context.Context) error {
 	// them to send on a closed channel after this returns.
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	// Block on in-flight async notifications before returning, so a headless
+	// process doesn't exit mid-send. (Notifications use a background context,
+	// so it doesn't matter that this runs before the deferred cancel.)
+	defer r.notifyWg.Wait()
 
 	total := len(r.steps) + len(r.vulnSteps)
 	runStart := time.Now()

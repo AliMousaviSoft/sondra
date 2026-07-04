@@ -3,7 +3,9 @@ package modules
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -273,7 +275,7 @@ func runKatana(ctx context.Context, cfg *config.Config, liveFile string, log cha
 	katanaFile := filepath.Join(cfg.OutputDir, "wayback-data", "katana.txt")
 	cmd := exec.CommandContext(ctx, "katana",
 		"-list", liveFile,
-		"-depth", "2",          // was 3
+		"-depth", "2", // was 3
 		"-jc",
 		"-kf", "all",
 		"-c", fmt.Sprintf("%d", cfg.Concurrency/2),
@@ -281,10 +283,10 @@ func runKatana(ctx context.Context, cfg *config.Config, liveFile string, log cha
 		"-o", katanaFile,
 		"-silent",
 		"-no-color",
-		"-fs", "fqdn",          // scope: stay on same FQDN only
-		"-duc",                 // disable update check
-		"-rl", "50",            // rate limit: 50 req/sec max
-		"-ct", "30",            // crawl duration timeout: 30 seconds per host
+		"-fs", "fqdn", // scope: stay on same FQDN only
+		"-duc",      // disable update check
+		"-rl", "50", // rate limit: 50 req/sec max
+		"-ct", "30", // crawl duration timeout: 30 seconds per host
 	)
 
 	var stderr bytes.Buffer
@@ -340,7 +342,11 @@ func deduplicateAndClassify(cfg *config.Config, urls []string, allURLsFile strin
 // Nuclei
 // ──────────────────────────────────────────────
 
-func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry, bgWg *sync.WaitGroup) error {
+// FindingFunc is called once per newly discovered nuclei finding, enabling
+// real-time per-finding notifications. May be nil.
+type FindingFunc func(name, severity, where string)
+
+func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry, bgWg *sync.WaitGroup, onFinding FindingFunc) error {
 	if _, err := exec.LookPath("nuclei"); err != nil {
 		sendLog(log, tui.LogWarn, "nuclei", "nuclei not in PATH — skipping")
 		return nil
@@ -352,7 +358,7 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 	if cfg.Modules.NucleiHigh {
 		sendLog(log, tui.LogInfo, "nuclei", "running crit/high templates (blocking)…")
 		outFile := filepath.Join(cfg.OutputDir, "nuclei-results", "crit_high.jsonl")
-		if err := runNucleiExec(ctx, cfg, templates, "critical,high", liveFile, outFile, log); err != nil {
+		if err := runNucleiExec(ctx, cfg, templates, "critical,high", liveFile, outFile, log, onFinding); err != nil {
 			sendLog(log, tui.LogWarn, "nuclei", fmt.Sprintf("crit/high: %v", err))
 		}
 	}
@@ -362,7 +368,7 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 		takeoverFile := filepath.Join(cfg.OutputDir, "nuclei-results", "takeovers.txt")
 		allDomains := filepath.Join(cfg.OutputDir, "alldomains.txt")
 		_ = runNucleiExec(ctx, cfg, []string{"dns/takeovers"}, "info,low,medium,high,critical",
-			allDomains, takeoverFile, log)
+			allDomains, takeoverFile, log, onFinding)
 	}
 
 	if cfg.Modules.NucleiMedium {
@@ -371,8 +377,10 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 			defer bgWg.Done()
 			sendLog(log, tui.LogInfo, "nuclei", "running medium templates (background)…")
 			outFile := filepath.Join(cfg.OutputDir, "nuclei-results", "medium.jsonl")
-			if err := runNucleiExec(context.Background(), cfg, templates, "medium",
-				liveFile, outFile, log); err != nil {
+			// Bound to the run ctx so SIGINT / a failed later step tears this
+			// down instead of leaving nuclei running after the scan returns.
+			if err := runNucleiExec(ctx, cfg, templates, "medium",
+				liveFile, outFile, log, onFinding); err != nil {
 				sendLog(log, tui.LogWarn, "nuclei medium", err.Error())
 				return
 			}
@@ -388,7 +396,7 @@ func RunNuclei(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry,
 
 func runNucleiExec(ctx context.Context, cfg *config.Config,
 	templates []string, severity, inFile, outFile string,
-	log chan<- tui.LogEntry) error {
+	log chan<- tui.LogEntry, onFinding FindingFunc) error {
 
 	args := []string{
 		"-l", inFile,
@@ -407,22 +415,159 @@ func runNucleiExec(ctx context.Context, cfg *config.Config,
 	}
 
 	cmd := exec.CommandContext(ctx, "nuclei", args...)
+	// nuclei's own -stats display only renders to a TTY; piped it shows nothing,
+	// so we tail the -o JSONL file instead. Keep nuclei's stdout off ours and
+	// capture stderr only for error diagnostics.
 	var stderr bytes.Buffer
+	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("nuclei (%s): %w — %s", severity, err, stderr.String())
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("nuclei (%s): start: %w", severity, err)
+	}
+
+	// Tail the results file: stream each finding live and beat a heartbeat while
+	// nuclei is quiet, so the run is observable regardless of TTY/-silent.
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tailNucleiFindings(done, outFile, severity, log, onFinding)
+	}()
+
+	err := cmd.Wait()
+	close(done)
+	wg.Wait()
+
+	if err != nil {
+		// A cancelled context is expected on SIGINT — don't treat it as failure.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if s := strings.TrimSpace(stderr.String()); s != "" {
+			return fmt.Errorf("nuclei (%s): %w — %s", severity, err, s)
 		}
 	}
 
 	count := countLines(outFile)
 	if count > 0 {
 		sendLog(log, tui.LogSuccess, "nuclei",
-			fmt.Sprintf("[%s] %d findings", severity, count))
+			fmt.Sprintf("[%s] %d findings total", severity, count))
 	}
 
 	return nil
+}
+
+// nucleiHit is the minimal shape we pull from a nuclei JSONL result line.
+type nucleiHit struct {
+	name     string
+	severity string
+	where    string
+}
+
+// parseNucleiLine extracts a finding from one JSONL line, tolerating both the
+// nested (info.name/info.severity) and flat schemas across nuclei versions.
+func parseNucleiLine(b []byte) (nucleiHit, bool) {
+	var o struct {
+		TemplateID string `json:"template-id"`
+		Host       string `json:"host"`
+		MatchedAt  string `json:"matched-at"`
+		Name       string `json:"name"`
+		Severity   string `json:"severity"`
+		Info       struct {
+			Name     string `json:"name"`
+			Severity string `json:"severity"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(b, &o); err != nil {
+		return nucleiHit{}, false
+	}
+	name := firstNonEmpty(o.Info.Name, o.Name, o.TemplateID)
+	if name == "" {
+		return nucleiHit{}, false
+	}
+	return nucleiHit{
+		name:     name,
+		severity: firstNonEmpty(o.Info.Severity, o.Severity, "unknown"),
+		where:    firstNonEmpty(o.MatchedAt, o.Host),
+	}, true
+}
+
+func sevEmoji(s string) string {
+	switch strings.ToLower(s) {
+	case "critical":
+		return "🔴"
+	case "high":
+		return "🟠"
+	case "medium":
+		return "🟡"
+	case "low":
+		return "⚪"
+	default:
+		return "▫️"
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// tailNucleiFindings polls the JSONL results file until done, logging each new
+// finding live and emitting a heartbeat when nuclei has been quiet for a while.
+func tailNucleiFindings(done <-chan struct{}, outFile, severity string, log chan<- tui.LogEntry, onFinding FindingFunc) {
+	start := time.Now()
+	lastBeat := time.Now()
+	seen := 0
+
+	drain := func() {
+		lines, err := readLines(outFile)
+		if err != nil {
+			return
+		}
+		var hits []nucleiHit
+		for _, l := range lines {
+			if h, ok := parseNucleiLine([]byte(l)); ok {
+				hits = append(hits, h)
+			}
+		}
+		// Log only findings we haven't reported yet. Partial trailing lines fail
+		// to parse and simply reappear (complete) on the next poll.
+		for _, h := range hits[min(seen, len(hits)):] {
+			sendLog(log, tui.LogSuccess, "nuclei",
+				fmt.Sprintf("%s [%s] %s — %s", sevEmoji(h.severity), h.severity, h.name, h.where))
+			if onFinding != nil {
+				onFinding(h.name, h.severity, h.where)
+			}
+		}
+		if len(hits) > seen {
+			seen = len(hits)
+			lastBeat = time.Now() // a finding is itself a sign of life
+		}
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			drain() // final flush
+			return
+		case <-ticker.C:
+			drain()
+			if time.Since(lastBeat) >= 30*time.Second {
+				sendLog(log, tui.LogInfo, "nuclei", fmt.Sprintf(
+					"[%s] scanning… %s elapsed, %d findings so far",
+					severity, time.Since(start).Round(time.Second), seen))
+				lastBeat = time.Now()
+			}
+		}
+	}
 }
 
 func buildTemplateDirs(base string) []string {

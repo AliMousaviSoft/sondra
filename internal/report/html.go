@@ -71,7 +71,7 @@ func Generate(cfg *config.Config) error {
 
 	tmplStr := reportTemplate()
 	tmpl, err := template.New("report").Funcs(template.FuncMap{
-		"join": strings.Join,
+		"join":  strings.Join,
 		"lower": strings.ToLower,
 		"severityClass": func(s string) string {
 			switch strings.ToLower(s) {
@@ -103,6 +103,13 @@ func Generate(cfg *config.Config) error {
 // ──────────────────────────────────────────────
 // Data collection
 // ──────────────────────────────────────────────
+
+// Collect gathers a completed scan's output into a ReportData summary.
+// Exported for consumers (e.g. notifications) that need scan stats without
+// rendering the full HTML report.
+func Collect(cfg *config.Config) (*ReportData, error) {
+	return collectData(cfg)
+}
 
 func collectData(cfg *config.Config) (*ReportData, error) {
 	d := &ReportData{
@@ -214,12 +221,32 @@ func parseNucleiJSONL(path string) []NucleiFinding {
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
+	// nuclei result lines (with request/response) can exceed the default 64KB
+	// token size — raise it so long findings aren't silently dropped.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
 	var findings []NucleiFinding
 	for sc.Scan() {
-		var nf NucleiFinding
-		if err := json.Unmarshal(sc.Bytes(), &nf); err == nil {
-			findings = append(findings, nf)
+		// nuclei v3 nests name/severity under "info"; older/flat output has them
+		// top-level. Parse both and prefer whichever is populated.
+		var raw struct {
+			NucleiFinding
+			Info struct {
+				Name     string `json:"name"`
+				Severity string `json:"severity"`
+			} `json:"info"`
 		}
+		if err := json.Unmarshal(sc.Bytes(), &raw); err != nil {
+			continue
+		}
+		nf := raw.NucleiFinding
+		if nf.Name == "" {
+			nf.Name = raw.Info.Name
+		}
+		if nf.Severity == "" {
+			nf.Severity = raw.Info.Severity
+		}
+		findings = append(findings, nf)
 	}
 	return findings
 }

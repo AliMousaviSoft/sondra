@@ -42,6 +42,80 @@ func DiffRuns(domain string) ([]string, error) {
 	return newSubs, nil
 }
 
+// Delta captures everything new in the latest run vs the previous one — the
+// unit continuous monitoring alerts on.
+type Delta struct {
+	Domain        string
+	NewSubdomains []string
+	NewLiveHosts  []string
+	NewPorts      []string
+	NewTakeovers  []string
+	NewFindings   []NucleiFinding
+}
+
+// Empty reports whether nothing changed between the two runs.
+func (d *Delta) Empty() bool {
+	return d == nil || (len(d.NewSubdomains) == 0 && len(d.NewLiveHosts) == 0 &&
+		len(d.NewPorts) == 0 && len(d.NewTakeovers) == 0 && len(d.NewFindings) == 0)
+}
+
+// AssetsChanged reports new attack surface (subdomains / live hosts / ports).
+func (d *Delta) AssetsChanged() bool {
+	return d != nil && (len(d.NewSubdomains) > 0 || len(d.NewLiveHosts) > 0 || len(d.NewPorts) > 0)
+}
+
+// FindingsChanged reports new vulns (nuclei findings / takeovers).
+func (d *Delta) FindingsChanged() bool {
+	return d != nil && (len(d.NewFindings) > 0 || len(d.NewTakeovers) > 0)
+}
+
+// DiffRunsDetailed diffs the two most recent runs across every result type.
+// With fewer than two runs it returns a non-nil empty Delta (baseline only).
+func DiffRunsDetailed(domain string) (*Delta, error) {
+	runs, err := listRuns(domain)
+	if err != nil {
+		return nil, err
+	}
+	d := &Delta{Domain: domain}
+	if len(runs) < 2 {
+		return d, nil // first run — establishes the baseline, nothing to diff
+	}
+	prev, curr := runs[len(runs)-2], runs[len(runs)-1]
+
+	// diffFiles errors only when the current file is missing (module didn't run);
+	// treat that as "no change" for that category.
+	d.NewSubdomains, _ = diffFiles(filepath.Join(prev, "alldomains.txt"), filepath.Join(curr, "alldomains.txt"))
+	d.NewLiveHosts, _ = diffFiles(filepath.Join(prev, "live.txt"), filepath.Join(curr, "live.txt"))
+	d.NewPorts, _ = diffFiles(filepath.Join(prev, "naabu-output", "open_ports.txt"), filepath.Join(curr, "naabu-output", "open_ports.txt"))
+	d.NewTakeovers, _ = diffFiles(filepath.Join(prev, "nuclei-results", "takeovers.txt"), filepath.Join(curr, "nuclei-results", "takeovers.txt"))
+	d.NewFindings = diffFindings(prev, curr)
+	return d, nil
+}
+
+// diffFindings returns nuclei findings present in curr but not in prev, keyed by
+// template + host + matched-at so re-detections of the same issue don't re-alert.
+func diffFindings(prevDir, currDir string) []NucleiFinding {
+	load := func(dir string) []NucleiFinding {
+		var fs []NucleiFinding
+		fs = append(fs, parseNucleiJSONL(filepath.Join(dir, "nuclei-results", "crit_high.jsonl"))...)
+		fs = append(fs, parseNucleiJSONL(filepath.Join(dir, "nuclei-results", "medium.jsonl"))...)
+		return fs
+	}
+	key := func(f NucleiFinding) string { return f.TemplateID + "|" + f.Host + "|" + f.URL }
+
+	prevSet := make(map[string]bool)
+	for _, f := range load(prevDir) {
+		prevSet[key(f)] = true
+	}
+	var out []NucleiFinding
+	for _, f := range load(currDir) {
+		if !prevSet[key(f)] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // listRuns returns all recon-* subdirectories for a domain, sorted chronologically.
 func listRuns(domain string) ([]string, error) {
 	base := domain // looks in ./<domain>/

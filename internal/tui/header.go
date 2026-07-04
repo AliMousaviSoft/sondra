@@ -45,7 +45,7 @@ var (
 	styleSep = lipgloss.NewStyle().
 			Foreground(colorDim)
 
-	styleDoneOK  = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+	styleDoneOK   = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
 	styleDoneFail = lipgloss.NewStyle().Foreground(colorRed).Bold(true)
 )
 
@@ -56,12 +56,12 @@ var (
 // HeaderModel holds the state needed to render the fixed header.
 // bubbletea manages the full terminal so this region never scrolls.
 type HeaderModel struct {
-	domain      string
-	step        StepUpdate
-	elapsed     time.Duration
-	done        bool
-	doneErr     error
-	lastStep    string
+	domain   string
+	step     StepUpdate
+	elapsed  time.Duration
+	done     bool
+	doneErr  error
+	lastStep string
 }
 
 // NewHeaderModel constructs a HeaderModel for the given domain.

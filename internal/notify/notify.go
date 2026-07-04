@@ -123,7 +123,9 @@ func FromConfig(c config.NotifyConfig) Multi {
 // Shared helpers
 // ──────────────────────────────────────────────
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+// 30s per attempt: notifications sent mid-nuclei compete with the scan's
+// traffic on a saturated link, so a short timeout drops them.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // postJSON marshals payload and POSTs it, returning an error on any non-2xx.
 func postJSON(ctx context.Context, url string, payload any) error {

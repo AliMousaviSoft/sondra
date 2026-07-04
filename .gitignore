@@ -2,3 +2,6 @@ go.mod.bak
 sondra
 go.mod.bak
 /sondra
+.claude
+graphify-out
+CLAUDE.md

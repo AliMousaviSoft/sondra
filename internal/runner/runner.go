@@ -9,6 +9,7 @@ import (
 
 	"github.com/AliMousaviSoft/sondra/internal/config"
 	"github.com/AliMousaviSoft/sondra/internal/modules"
+	"github.com/AliMousaviSoft/sondra/internal/notify"
 	"github.com/AliMousaviSoft/sondra/internal/report"
 	"github.com/AliMousaviSoft/sondra/internal/tui"
 )
@@ -22,9 +23,16 @@ type Runner struct {
 	cfg        *config.Config
 	logCh      chan<- tui.LogEntry
 	progressCh chan<- tui.StepUpdate
-	steps      []StepDef
+	steps      []StepDef // recon phase — fast, gates the initial report + alert
+	vulnSteps  []StepDef // vuln phase — slow (nuclei), runs after recon is delivered
 	bgWg       sync.WaitGroup
+	notifier   notify.Notifier
 }
+
+// SetNotifier attaches an outbound notifier. Safe to leave nil (no-op).
+// Leave nil to suppress all notifications (e.g. monitor mode sends its own
+// delta alert instead of the per-scan summaries).
+func (r *Runner) SetNotifier(n notify.Notifier) { r.notifier = n }
 
 func New(cfg *config.Config, logCh chan<- tui.LogEntry, progressCh chan<- tui.StepUpdate) *Runner {
 	return &Runner{
@@ -37,9 +45,13 @@ func New(cfg *config.Config, logCh chan<- tui.LogEntry, progressCh chan<- tui.St
 func (r *Runner) Build(mods config.ModuleFlags) {
 	r.cfg.Modules = mods
 	r.steps = nil
+	r.vulnSteps = nil
 
 	add := func(name string, fn func(ctx context.Context) error) {
 		r.steps = append(r.steps, StepDef{name, fn})
+	}
+	addVuln := func(name string, fn func(ctx context.Context) error) {
+		r.vulnSteps = append(r.vulnSteps, StepDef{name, fn})
 	}
 
 	add("setup", r.runSetup)
@@ -63,42 +75,104 @@ func (r *Runner) Build(mods config.ModuleFlags) {
 	if mods.Gau || mods.Katana {
 		add("url collection", r.runURLCollection)
 	}
-	if mods.NucleiHigh || mods.NucleiMedium {
-		add("nuclei", r.runNuclei)
+	// Nuclei is the slow phase — it runs AFTER recon results are reported so the
+	// pipeline delivers value in minutes instead of blocking for ~15-20m. The
+	// report is generated inline by RunSync (initial + regenerated post-nuclei).
+	if mods.NucleiHigh || mods.NucleiMedium || mods.Takeover {
+		addVuln("nuclei", r.runNuclei)
 	}
-	add("report", r.runReport)
 }
 
-func (r *Runner) StepTotal() int { return len(r.steps) }
+func (r *Runner) StepTotal() int { return len(r.steps) + len(r.vulnSteps) }
 
-// RunSync runs the full pipeline synchronously.
-// Called inside a tea.Cmd goroutine in model.go — the return value
-// becomes a doneMsg in the bubbletea event loop.
-func (r *Runner) RunSync() error {
-	ctx := context.Background()
-	total := len(r.steps)
+// RunSync runs the pipeline in two phases against ctx.
+//
+// Phase 1 (recon) is fast: on completion it generates the report and — if a
+// vuln phase follows — fires an initial "recon done" notification so results
+// land in minutes. Phase 2 (nuclei) is slow and non-fatal: recon has already
+// been delivered, so a nuclei error doesn't fail the run. When it finishes the
+// report is regenerated with findings and the final notification is sent.
+//
+// Called inside a tea.Cmd goroutine in model.go (TUI) or directly in headless
+// mode. Cancelling ctx (e.g. SIGINT) aborts between steps and propagates into
+// each module's exec calls.
+func (r *Runner) RunSync(parent context.Context) error {
+	// Child context so an error or cancellation can tear down background jobs
+	// (e.g. the medium-nuclei goroutine) instead of blocking on them or leaving
+	// them to send on a closed channel after this returns.
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 
+	total := len(r.steps) + len(r.vulnSteps)
+	runStart := time.Now()
+	r.notifyStart(ctx)
+
+	// ── Phase 1: recon ──
 	for i, step := range r.steps {
-		r.progressCh <- tui.StepUpdate{
-			Label:   step.Name,
-			Current: i + 1,
-			Total:   total,
+		if err := ctx.Err(); err != nil {
+			r.log(tui.LogWarn, "runner", "cancelled")
+			cancel()
+			r.bgWg.Wait()
+			r.notifyFinish(err, time.Since(runStart))
+			return err
 		}
-
-		r.log(tui.LogInfo, step.Name, "starting")
-		start := time.Now()
-
-		if err := step.Run(ctx); err != nil {
+		if err := r.runStep(ctx, step, i+1, total); err != nil {
 			r.log(tui.LogError, step.Name, fmt.Sprintf("failed: %v", err))
+			cancel() // stop any background jobs before we return
+			r.bgWg.Wait()
+			r.notifyFinish(err, time.Since(runStart))
 			return fmt.Errorf("step %q: %w", step.Name, err)
 		}
-
-		r.log(tui.LogSuccess, step.Name,
-			fmt.Sprintf("done in %s", time.Since(start).Round(time.Millisecond)))
 	}
 
-	r.log(tui.LogInfo, "runner", "waiting for background jobs…")
-	r.bgWg.Wait()
+	// Initial report from recon output.
+	if err := r.runReport(ctx); err != nil {
+		r.log(tui.LogWarn, "report", err.Error())
+	}
+
+	// No vuln phase → single finish notification, done.
+	if len(r.vulnSteps) == 0 {
+		r.notifyFinish(nil, time.Since(runStart))
+		return nil
+	}
+
+	// Recon delivered — notify now, before the slow vuln scan.
+	r.notifyReconDone(time.Since(runStart))
+	r.log(tui.LogInfo, "nuclei", "recon results reported — running vuln scan (this can take a while)…")
+
+	// ── Phase 2: nuclei (slow, non-fatal). ──
+	base := len(r.steps)
+	for i, step := range r.vulnSteps {
+		if err := ctx.Err(); err != nil {
+			r.log(tui.LogWarn, "runner", "cancelled during vuln scan — recon results already delivered")
+			cancel()
+			r.bgWg.Wait()
+			return nil
+		}
+		if err := r.runStep(ctx, step, base+i+1, total); err != nil {
+			r.log(tui.LogWarn, step.Name, err.Error())
+		}
+	}
+	r.bgWg.Wait() // wait for the background medium-nuclei job
+
+	// Regenerate the report with vuln findings, then send the final alert.
+	if err := r.runReport(ctx); err != nil {
+		r.log(tui.LogWarn, "report", err.Error())
+	}
+	r.notifyFinish(nil, time.Since(runStart))
+	return nil
+}
+
+// runStep emits progress + start/done logs around one step's execution.
+func (r *Runner) runStep(ctx context.Context, step StepDef, num, total int) error {
+	r.progressCh <- tui.StepUpdate{Label: step.Name, Current: num, Total: total}
+	r.log(tui.LogInfo, step.Name, "starting")
+	start := time.Now()
+	if err := step.Run(ctx); err != nil {
+		return err
+	}
+	r.log(tui.LogSuccess, step.Name,
+		fmt.Sprintf("done in %s", time.Since(start).Round(time.Millisecond)))
 	return nil
 }
 
@@ -197,7 +271,7 @@ func (r *Runner) runURLCollection(ctx context.Context) error {
 }
 
 func (r *Runner) runNuclei(ctx context.Context) error {
-	return modules.RunNuclei(ctx, r.cfg, r.logCh, &r.bgWg)
+	return modules.RunNuclei(ctx, r.cfg, r.logCh, &r.bgWg, r.notifyFinding)
 }
 
 func (r *Runner) runReport(ctx context.Context) error {

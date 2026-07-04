@@ -1,15 +1,18 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/AliMousaviSoft/sondra/internal/config"
+	"github.com/AliMousaviSoft/sondra/internal/report"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/AliMousaviSoft/sondra/internal/config"
 )
 
 type State int
@@ -34,7 +37,7 @@ type tickMsg time.Time
 
 type Runner interface {
 	Build(mods config.ModuleFlags)
-	RunSync() error
+	RunSync(ctx context.Context) error
 	StepTotal() int
 }
 
@@ -105,7 +108,7 @@ func (m *Model) Init() tea.Cmd {
 		cmds = append(cmds,
 			tickCmd(),
 			func() tea.Msg {
-				err := m.runner.RunSync()
+				err := m.runner.RunSync(context.Background())
 				return doneMsg{err: err}
 			},
 		)
@@ -191,9 +194,10 @@ func (m *Model) View() string {
 
 	case StateDone:
 		header := m.header.View(m.spinner)
-		headerHeight := lipgloss.Height(header)
-		m.logView.Height = m.height - headerHeight - 3
-		return header + "\n" + m.logView.View() + "\n" + m.renderSummary()
+		summary := m.renderSummary()
+		used := lipgloss.Height(header) + lipgloss.Height(summary) + 1
+		m.logView.Height = m.height - used
+		return header + "\n" + m.logView.View() + "\n" + summary
 	}
 	return ""
 }
@@ -211,7 +215,7 @@ func (m *Model) startScan() tea.Cmd {
 	return tea.Batch(
 		tickCmd(),
 		func() tea.Msg {
-			err := m.runner.RunSync()
+			err := m.runner.RunSync(context.Background())
 			return doneMsg{err: err}
 		},
 	)
@@ -225,18 +229,23 @@ func (m *Model) resizeViewport() {
 }
 
 func (m *Model) renderSummary() string {
-	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#E84855")).
-		Padding(0, 2).
-		Width(m.width - 4)
-
 	if m.doneErr != nil {
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#E84855")).
+			Padding(0, 2).
+			Width(m.width - 4)
 		return style.Render(fmt.Sprintf("  ✗ Scan failed: %v\n  Press any key to exit.", m.doneErr))
 	}
-	return style.Render(
-		fmt.Sprintf("  ✓ Scan complete in %s\n  Press any key to exit.", m.elapsed.Round(time.Second)),
-	)
+
+	hint := summaryDim.Render(fmt.Sprintf("✓ complete in %s · press any key to exit",
+		m.elapsed.Round(time.Second)))
+
+	if data, err := report.Collect(m.cfg); err == nil && data != nil {
+		box := strings.TrimRight(RenderSummary(m.width-2, data, m.cfg.OutputDir+"/master_report.html"), "\n")
+		return box + "\n" + hint
+	}
+	return hint
 }
 
 func listenLog(ch chan LogEntry) tea.Cmd {

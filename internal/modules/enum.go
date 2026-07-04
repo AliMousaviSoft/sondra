@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/runner"
 	"github.com/AliMousaviSoft/sondra/internal/config"
 	"github.com/AliMousaviSoft/sondra/internal/tui"
+	"github.com/projectdiscovery/subfinder/v2/pkg/runner"
 )
 
 // RunPassiveEnum runs subfinder, assetfinder, and crt.sh in parallel.
@@ -173,7 +173,7 @@ func runSubfinder(ctx context.Context, cfg *config.Config) ([]string, error) {
 		Timeout:            int(cfg.Timeout.Seconds()),
 		MaxEnumerationTime: 10,
 		Domain:             []string{cfg.Domain},
-		Output:             f,   // io.Writer, not OutputFile string
+		Output:             f, // io.Writer, not OutputFile string
 		Silent:             true,
 	}
 
@@ -300,7 +300,7 @@ func CacheValid(path string, maxAge time.Duration) bool {
 type Result struct {
 	Name    string
 	Count   int
-	Output  string        // path to primary output file
+	Output  string // path to primary output file
 	Error   error
 	Elapsed time.Duration
 }

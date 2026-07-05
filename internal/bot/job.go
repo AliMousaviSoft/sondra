@@ -47,6 +47,28 @@ func (j *jobs) add(parent context.Context, kind, domain, preset string) (*Job, c
 	return job, ctx
 }
 
+// addWithID registers a job under a specific id (used when resuming persisted
+// jobs so /stop <id> stays stable across restarts) and advances the id counter
+// past it so future add() calls never collide.
+func (j *jobs) addWithID(parent context.Context, id int, kind, domain, preset string) (*Job, context.Context) {
+	ctx, cancel := context.WithCancel(parent)
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if id > j.next {
+		j.next = id
+	}
+	job := &Job{
+		ID:        id,
+		Kind:      kind,
+		Domain:    domain,
+		Preset:    preset,
+		StartedAt: time.Now(),
+		cancel:    cancel,
+	}
+	j.m[id] = job
+	return job, ctx
+}
+
 func (j *jobs) finish(id int) {
 	j.mu.Lock()
 	defer j.mu.Unlock()

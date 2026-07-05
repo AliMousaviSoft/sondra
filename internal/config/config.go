@@ -4,11 +4,48 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
+
+// firstNonEmpty returns the first non-blank string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// parseStringList parses a comma-separated list into trimmed, non-empty items.
+func parseStringList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// parseUserIDs parses a comma-separated list of Telegram user IDs.
+func parseUserIDs(s string) []int64 {
+	var ids []int64
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
 
 // Config is the single source of truth passed to every module and the TUI.
 type Config struct {
@@ -29,6 +66,51 @@ type Config struct {
 	Preset string
 	// Notify holds outbound notification settings (Discord/Telegram/webhook).
 	Notify NotifyConfig
+	// Bot holds the Telegram control-bot settings.
+	Bot BotConfig
+}
+
+// BotConfig configures the `sondra bot` control daemon (Telegram + Discord).
+type BotConfig struct {
+	Token        string   // Telegram bot token (falls back to notify.telegram.token)
+	AllowedUsers []int64  // Telegram user IDs permitted to command the bot
+	DiscordToken string   // Discord bot token (enables Discord slash commands)
+	DiscordUsers []string // Discord user IDs permitted to command the bot
+	DiscordGuild string   // optional: register slash commands to this guild (instant); else global
+}
+
+// Enabled reports whether at least one transport is fully configured. The
+// allow-list is mandatory on each — the bot refuses to run open to everyone.
+func (b BotConfig) Enabled() bool { return b.TelegramEnabled() || b.DiscordEnabled() }
+
+// TelegramEnabled reports whether the Telegram transport is configured.
+func (b BotConfig) TelegramEnabled() bool {
+	return b.Token != "" && len(b.AllowedUsers) > 0
+}
+
+// DiscordEnabled reports whether the Discord transport is configured.
+func (b BotConfig) DiscordEnabled() bool {
+	return b.DiscordToken != "" && len(b.DiscordUsers) > 0
+}
+
+// Allowed reports whether a Telegram user id may command the bot.
+func (b BotConfig) Allowed(userID int64) bool {
+	for _, id := range b.AllowedUsers {
+		if id == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// DiscordAllowed reports whether a Discord user id may command the bot.
+func (b BotConfig) DiscordAllowed(id string) bool {
+	for _, u := range b.DiscordUsers {
+		if u == id {
+			return true
+		}
+	}
+	return false
 }
 
 // NotifyConfig configures where scan lifecycle events are delivered.
@@ -161,6 +243,13 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 			MinSeverity:   v.GetString("notify.min_severity"),
 			NotifyOnStart: v.GetBool("notify.on_start"),
 			OnlyNotable:   v.GetBool("notify.only_notable"),
+		},
+		Bot: BotConfig{
+			Token:        firstNonEmpty(v.GetString("bot.token"), v.GetString("notify.telegram.token")),
+			AllowedUsers: parseUserIDs(v.GetString("bot.allowed_users")),
+			DiscordToken: v.GetString("bot.discord_token"),
+			DiscordUsers: parseStringList(v.GetString("bot.discord_users")),
+			DiscordGuild: v.GetString("bot.discord_guild"),
 		},
 	}
 

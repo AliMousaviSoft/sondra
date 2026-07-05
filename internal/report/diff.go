@@ -129,8 +129,37 @@ func diffFindings(prevDir, currDir string) []NucleiFinding {
 	return out
 }
 
-// LatestRunDir returns the most recent recon-* directory for a domain.
-func LatestRunDir(domain string) (string, error) {
+// LatestDomain returns the domain whose most recent run is newest, for commands
+// that omit an explicit domain. Run dirs are recon-<timestamp>, so the domain
+// owning the lexicographically-greatest run name is the most recently scanned.
+func LatestDomain() (string, error) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return "", err
+	}
+	var bestDomain, bestRun string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		runs, err := listRuns(e.Name())
+		if err != nil || len(runs) == 0 {
+			continue
+		}
+		if latest := filepath.Base(runs[len(runs)-1]); latest > bestRun {
+			bestRun, bestDomain = latest, e.Name()
+		}
+	}
+	if bestDomain == "" {
+		return "", fmt.Errorf("no reports yet — run a scan first")
+	}
+	return bestDomain, nil
+}
+
+// LatestReport returns the path to the most recent run's master_report.html
+// that actually exists, skipping in-progress runs whose report hasn't been
+// written yet (e.g. a monitor pass that just started on restart).
+func LatestReport(domain string) (string, error) {
 	runs, err := listRuns(domain)
 	if err != nil {
 		return "", err
@@ -138,7 +167,13 @@ func LatestRunDir(domain string) (string, error) {
 	if len(runs) == 0 {
 		return "", fmt.Errorf("no runs found for %s", domain)
 	}
-	return runs[len(runs)-1], nil
+	for i := len(runs) - 1; i >= 0; i-- {
+		p := filepath.Join(runs[i], "master_report.html")
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("no finished report yet for %s (scan still running?)", domain)
 }
 
 // listRuns returns all recon-* subdirectories for a domain, sorted chronologically.

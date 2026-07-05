@@ -77,6 +77,7 @@ type BotConfig struct {
 	DiscordToken string   // Discord bot token (enables Discord slash commands)
 	DiscordUsers []string // Discord user IDs permitted to command the bot
 	DiscordGuild string   // optional: register slash commands to this guild (instant); else global
+	StateDB      string   // SQLite path for persisting monitor jobs across restarts ("off" disables)
 }
 
 // Enabled reports whether at least one transport is fully configured. The
@@ -250,6 +251,7 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 			DiscordToken: v.GetString("bot.discord_token"),
 			DiscordUsers: parseStringList(v.GetString("bot.discord_users")),
 			DiscordGuild: v.GetString("bot.discord_guild"),
+			StateDB:      firstNonEmpty(v.GetString("bot.state_db"), "sondra-bot.db"),
 		},
 	}
 

@@ -1,7 +1,10 @@
 package bot
 
 import (
+	"context"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AliMousaviSoft/sondra/internal/notify"
 )
@@ -9,9 +12,12 @@ import (
 // responder abstracts replying and scan-result delivery across transports
 // (Telegram, Discord), so command handlers are written once.
 type responder interface {
-	reply(text string)         // send a message back to the invoker
-	notifier() notify.Notifier // where scan alerts stream
-	fmtr() formatter           // transport-specific text styling
+	reply(text string)                   // send a message back to the invoker
+	sendFile(path, caption string) error // upload a file (e.g. the HTML report)
+	notifier() notify.Notifier           // where scan alerts stream
+	fmtr() formatter                     // transport-specific text styling
+	transport() string                   // "telegram" | "discord" (for persistence)
+	dest() string                        // chat/channel id to resume delivery to
 }
 
 // formatter renders inline styling for a transport: Telegram HTML vs Discord
@@ -53,6 +59,13 @@ type tgResponder struct {
 	chatID int64
 }
 
-func (t *tgResponder) reply(text string)         { t.bot.reply(t.chatID, text) }
+func (t *tgResponder) reply(text string) { t.bot.reply(t.chatID, text) }
+func (t *tgResponder) sendFile(path, caption string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return t.bot.tg.sendDocument(ctx, t.chatID, path, caption)
+}
 func (t *tgResponder) notifier() notify.Notifier { return t.bot.chatNotifier(t.chatID) }
 func (t *tgResponder) fmtr() formatter           { return htmlFmt{} }
+func (t *tgResponder) transport() string         { return "telegram" }
+func (t *tgResponder) dest() string              { return strconv.FormatInt(t.chatID, 10) }

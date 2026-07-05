@@ -69,6 +69,19 @@ func (d *Delta) FindingsChanged() bool {
 	return d != nil && (len(d.NewFindings) > 0 || len(d.NewTakeovers) > 0)
 }
 
+// Notable reports whether the delta should trigger an alert under the given
+// monitor mode: "findings", "assets", or anything else ("all").
+func (d *Delta) Notable(mode string) bool {
+	switch mode {
+	case "findings":
+		return d.FindingsChanged()
+	case "assets":
+		return d.AssetsChanged()
+	default:
+		return !d.Empty()
+	}
+}
+
 // DiffRunsDetailed diffs the two most recent runs across every result type.
 // With fewer than two runs it returns a non-nil empty Delta (baseline only).
 func DiffRunsDetailed(domain string) (*Delta, error) {
@@ -114,6 +127,18 @@ func diffFindings(prevDir, currDir string) []NucleiFinding {
 		}
 	}
 	return out
+}
+
+// LatestRunDir returns the most recent recon-* directory for a domain.
+func LatestRunDir(domain string) (string, error) {
+	runs, err := listRuns(domain)
+	if err != nil {
+		return "", err
+	}
+	if len(runs) == 0 {
+		return "", fmt.Errorf("no runs found for %s", domain)
+	}
+	return runs[len(runs)-1], nil
 }
 
 // listRuns returns all recon-* subdirectories for a domain, sorted chronologically.

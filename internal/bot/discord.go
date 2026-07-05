@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -175,7 +176,59 @@ func (d *dcResponder) notifier() notify.Notifier {
 	return &discordChannelNotifier{session: d.session, interaction: d.interaction, channelID: d.channelID}
 }
 
-func (d *dcResponder) fmtr() formatter { return mdFmt{} }
+func (d *dcResponder) sendFile(path, caption string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Interaction follow-up carries files over the interaction token — works
+	// without the bot scope while the token is valid (~15m).
+	_, err = d.session.FollowupMessageCreate(d.interaction, true, &discordgo.WebhookParams{
+		Content: caption,
+		Files:   []*discordgo.File{{Name: filepath.Base(path), ContentType: "text/html", Reader: f}},
+	})
+	return err
+}
+
+func (d *dcResponder) fmtr() formatter   { return mdFmt{} }
+func (d *dcResponder) transport() string { return "discord" }
+func (d *dcResponder) dest() string      { return d.channelID }
+
+// discordChannelResponder is a detached responder used to resume a persisted
+// Discord monitor after a restart: the original interaction is long gone, so it
+// posts directly to the stored channel (requires the bot scope / Send Messages).
+type discordChannelResponder struct {
+	session   *discordgo.Session
+	channelID string
+}
+
+func (d *discordChannelResponder) reply(text string) {
+	if _, err := d.session.ChannelMessageSend(d.channelID, truncate(text, 1900)); err != nil {
+		fmt.Fprintf(os.Stderr, "bot: discord channel send failed: %v\n", err)
+	}
+}
+
+func (d *discordChannelResponder) notifier() notify.Notifier {
+	return &discordChannelNotifier{session: d.session, channelID: d.channelID}
+}
+
+func (d *discordChannelResponder) sendFile(path, caption string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = d.session.ChannelMessageSendComplex(d.channelID, &discordgo.MessageSend{
+		Content: caption,
+		Files:   []*discordgo.File{{Name: filepath.Base(path), ContentType: "text/html", Reader: f}},
+	})
+	return err
+}
+
+func (d *discordChannelResponder) fmtr() formatter   { return mdFmt{} }
+func (d *discordChannelResponder) transport() string { return "discord" }
+func (d *discordChannelResponder) dest() string      { return d.channelID }
 
 // discordChannelNotifier posts scan alerts as embeds tied to the invoking
 // interaction. It prefers an interaction follow-up (works without the bot
@@ -238,6 +291,7 @@ func discordColorFor(l notify.Level) int {
 func slashCommands() []*discordgo.ApplicationCommand {
 	str := discordgo.ApplicationCommandOptionString
 	domain := &discordgo.ApplicationCommandOption{Type: str, Name: "domain", Description: "Target domain", Required: true}
+	domainOpt := &discordgo.ApplicationCommandOption{Type: str, Name: "domain", Description: "Target domain (default: latest scanned)"}
 	preset := &discordgo.ApplicationCommandOption{
 		Type: str, Name: "preset", Description: "Scan preset (default quick)",
 		Choices: choices("quick", "full", "passive", "enum", "vuln"),
@@ -254,8 +308,8 @@ func slashCommands() []*discordgo.ApplicationCommand {
 	return []*discordgo.ApplicationCommand{
 		{Name: "scan", Description: "Run a recon scan against a domain", Options: []*discordgo.ApplicationCommandOption{domain, preset, modules, exclude}},
 		{Name: "monitor", Description: "Watch a domain, alert on changes", Options: []*discordgo.ApplicationCommandOption{domain, interval, on, preset, modules}},
-		{Name: "diff", Description: "Show changes vs the previous run", Options: []*discordgo.ApplicationCommandOption{domain}},
-		{Name: "report", Description: "Path to the latest report", Options: []*discordgo.ApplicationCommandOption{domain}},
+		{Name: "diff", Description: "Show changes vs the previous run", Options: []*discordgo.ApplicationCommandOption{domainOpt}},
+		{Name: "report", Description: "Upload the latest HTML report", Options: []*discordgo.ApplicationCommandOption{domainOpt}},
 		{Name: "stop", Description: "Cancel a running job", Options: []*discordgo.ApplicationCommandOption{id}},
 		{Name: "status", Description: "List active scan/monitor jobs"},
 		{Name: "stopall", Description: "Cancel every running job"},

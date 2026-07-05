@@ -185,6 +185,14 @@ notify:
   min_severity: high                                  # lowest nuclei severity listed in summaries
   on_start: false                                     # also notify when a scan starts (default off)
   only_notable: false                                 # only send finish msg on signal (findings/new subs/takeovers/error)
+
+# Control bot (optional) — drive scans/monitors from Telegram and/or Discord
+bot:
+  token: "123456:ABC..."                              # Telegram (falls back to notify.telegram.token)
+  allowed_users: "111111111,222222222"                # Telegram user ids allowed
+  discord_token: "..."                                # Discord bot token (slash commands)
+  discord_users: "333333333,444444444"                # Discord user ids allowed
+  discord_guild: "555555555"                          # optional: instant per-guild command registration
 ```
 
 Environment variables use `SONDRA_` prefix (nested keys join with `_`):
@@ -262,6 +270,47 @@ backend to consume:
 `monitor` sends the same payload with `"event": "monitor_delta"` and `new_*`
 arrays describing only what changed. Discord/Telegram ignore `result` and render
 the human-readable message.
+
+---
+
+## Control bot (Telegram + Discord)
+
+`sondra bot` runs a daemon so you can drive scans and monitors from chat —
+**Telegram** (text commands) and/or **Discord** (native slash commands). Both
+are **allow-listed** (only the configured user ids can command it) and validate
+every target against a strict domain regex — input flows into the recon tools,
+so this is the injection gate.
+
+```bash
+# Telegram
+export SONDRA_BOT_TOKEN="123456:ABC..."          # or notify.telegram.token
+export SONDRA_BOT_ALLOWED_USERS="111111111"      # your Telegram user id
+# Discord (optional)
+export SONDRA_BOT_DISCORD_TOKEN="..."            # Discord bot token
+export SONDRA_BOT_DISCORD_USERS="333333333"      # your Discord user id
+sondra bot                                       # starts whichever is configured
+```
+
+Commands (Telegram text · Discord slash):
+
+```
+/scan <domain> [preset] [--modules …] [--exclude …]
+/monitor <domain> [--interval 6h] [--on all|assets|findings] [--modules …]
+/diff <domain>        /status      /stop <id>     /stopall
+/report <domain>      /presets     /modules       /version     /help
+```
+
+Results (recon-done, per-finding, finish alerts) stream back to the chat/channel
+that issued the command **and** to your configured Discord/webhook. Jobs run in
+the background — start several, watch with `/status`, cancel with `/stop`.
+
+**Telegram setup:** message [@BotFather](https://t.me/botfather) → `/newbot` (or
+reuse your notify bot) for the token; message @userinfobot for your user id.
+
+**Discord setup:** [Developer Portal](https://discord.com/developers/applications)
+→ New Application → **Bot** → copy the token → invite it to your server
+(`applications.commands` scope). Slash commands register on startup — set
+`discord_guild` for instant registration (global takes up to ~1h to appear).
 
 ---
 

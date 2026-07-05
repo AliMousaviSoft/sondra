@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AliMousaviSoft/sondra/internal/bot"
 	"github.com/AliMousaviSoft/sondra/internal/config"
 	"github.com/AliMousaviSoft/sondra/internal/notify"
 	"github.com/AliMousaviSoft/sondra/internal/report"
@@ -43,7 +44,7 @@ func buildRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(buildScan(), buildMonitor(), buildReport(), buildDiff(), buildVersion(), buildUpdate())
+	root.AddCommand(buildScan(), buildMonitor(), buildBot(), buildReport(), buildDiff(), buildVersion(), buildUpdate())
 	return root
 }
 
@@ -338,14 +339,7 @@ func monitorPass(ctx context.Context, cfgFile, domain string, excluded []string,
 
 // deltaNotable reports whether the delta should trigger an alert under mode.
 func deltaNotable(d *report.Delta, mode string) bool {
-	switch mode {
-	case "findings":
-		return d.FindingsChanged()
-	case "assets":
-		return d.AssetsChanged()
-	default: // "all"
-		return !d.Empty()
-	}
+	return d.Notable(mode)
 }
 
 func normalizeOnMode(s string) string {
@@ -357,6 +351,52 @@ func normalizeOnMode(s string) string {
 	default:
 		return "all"
 	}
+}
+
+func buildBot() *cobra.Command {
+	var cfgFile string
+
+	cmd := &cobra.Command{
+		Use:   "bot",
+		Short: "Run the control bot (drive scans/monitors from Telegram/Discord)",
+		Long: `Run a control bot that lets allow-listed users start scans and monitors,
+run diffs, and check status from chat. Enable Telegram, Discord, or both.
+
+Config (.sondra.yaml or env):
+  bot:
+    # Telegram (text commands)
+    token: "123456:ABC..."             # falls back to notify.telegram.token
+    allowed_users: "111111,222222"     # Telegram user ids
+    # Discord (slash commands)
+    discord_token: "..."               # Discord bot token
+    discord_users: "333333,444444"     # Discord user ids
+    discord_guild: "5555"              # optional: instant per-guild registration
+
+  SONDRA_BOT_TOKEN, SONDRA_BOT_ALLOWED_USERS, SONDRA_BOT_DISCORD_TOKEN,
+  SONDRA_BOT_DISCORD_USERS also work.`,
+		Example: `  sondra bot                    # start the control bot
+  # then: /scan example.com quick  (Telegram text or Discord slash)`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// A domain isn't needed to start the bot; pass a placeholder so
+			// config.Load doesn't reject it (jobs reload config per target).
+			cfg, err := config.Load(cfgFile, "bot.local", nil, "quick", true)
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+			if !cfg.Bot.Enabled() {
+				return fmt.Errorf("bot not configured: enable Telegram (bot.token + bot.allowed_users) and/or Discord (bot.discord_token + bot.discord_users)")
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			fmt.Println(tui.RenderBanner(version, ""))
+			return bot.New(cfg, cfgFile, version).Run(ctx)
+		},
+	}
+
+	cmd.Flags().StringVar(&cfgFile, "config", "", "Config file (default: ~/.sondra.yaml)")
+	return cmd
 }
 
 func buildReport() *cobra.Command {

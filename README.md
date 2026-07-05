@@ -193,6 +193,7 @@ bot:
   discord_token: "..."                                # Discord bot token (slash commands)
   discord_users: "333333333,444444444"                # Discord user ids allowed
   discord_guild: "555555555"                          # optional: instant per-guild command registration
+  state_db: "sondra-bot.db"                            # SQLite path for resuming monitors after a restart ("off" disables)
 ```
 
 Environment variables use `SONDRA_` prefix (nested keys join with `_`):
@@ -303,6 +304,16 @@ Commands (Telegram text · Discord slash):
 Results (recon-done, per-finding, finish alerts) stream back to the chat/channel
 that issued the command **and** to your configured Discord/webhook. Jobs run in
 the background — start several, watch with `/status`, cancel with `/stop`.
+`/report <domain>` uploads the actual `master_report.html` as a file attachment
+(not a host-side path), so you can open it straight from your phone.
+
+**Monitors survive restarts.** Running monitors are persisted to a SQLite file
+(`bot.state_db`, default `sondra-bot.db`; set `off` to disable). When the daemon
+restarts it resumes each one — replying in the original chat/channel with a
+`♻️ Resumed monitor #N` note — so a redeploy or crash won't silently drop a
+long-running watch. A user `/stop` (or `/stopall`) forgets the job; only a
+shutdown keeps it for resume. One-shot `/scan` jobs are not persisted. The
+store uses a pure-Go SQLite driver, so release binaries stay cgo-free.
 
 **Telegram setup:** message [@BotFather](https://t.me/botfather) → `/newbot` (or
 reuse your notify bot) for the token; message @userinfobot for your user id.

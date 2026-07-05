@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -109,6 +112,51 @@ func (t *telegram) post(ctx context.Context, chatID int64, text, parseMode strin
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("sendMessage: %s: %s", resp.Status, string(b))
+	}
+	return nil
+}
+
+// sendDocument uploads a file to the chat via multipart sendDocument, so the
+// operator gets the actual report instead of a host-side path.
+func (t *telegram) sendDocument(ctx context.Context, chatID int64, path, caption string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	_ = mw.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+	if caption != "" {
+		_ = mw.WriteField("caption", truncate(caption, 1000))
+	}
+	fw, err := mw.CreateFormFile("document", filepath.Base(path))
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(fw, f); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+
+	endpoint := "https://api.telegram.org/bot" + t.token + "/sendDocument"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("sendDocument: %s: %s", resp.Status, string(b))
 	}
 	return nil
 }

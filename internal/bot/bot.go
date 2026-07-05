@@ -21,7 +21,9 @@ type Bot struct {
 	version string
 	tg      *telegram
 	jobs    *jobs
-	rootCtx context.Context // daemon lifetime; jobs derive from it
+	store   *store            // persisted monitor jobs (nil when disabled)
+	discord *discordTransport // set while the Discord transport is running
+	rootCtx context.Context   // daemon lifetime; jobs derive from it
 }
 
 // New builds a Bot. cfgFile is reloaded per job so each scan gets a fresh
@@ -40,15 +42,31 @@ func New(cfg *config.Config, cfgFile, version string) *Bot {
 func (b *Bot) Run(ctx context.Context) error {
 	b.rootCtx = ctx
 
+	// Open the job store (best-effort) before starting transports so resumed
+	// jobs can rebuild their responders.
+	if path := b.cfg.Bot.StateDB; path != "" && !strings.EqualFold(path, "off") {
+		st, err := openStore(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bot: state db disabled (%s): %v\n", path, err)
+		} else {
+			b.store = st
+			defer st.close()
+		}
+	}
+
 	var started []string
 	if b.cfg.Bot.DiscordEnabled() {
 		dc, err := startDiscord(b)
 		if err != nil {
 			return fmt.Errorf("discord: %w", err)
 		}
+		b.discord = dc
 		defer dc.close()
 		started = append(started, "discord")
 	}
+
+	// Resume any monitors persisted before the last shutdown.
+	b.resumeJobs()
 
 	if b.cfg.Bot.TelegramEnabled() {
 		started = append(started, "telegram")

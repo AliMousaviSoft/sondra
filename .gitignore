@@ -5,3 +5,5 @@ go.mod.bak
 .claude
 graphify-out
 CLAUDE.md
+sondra-bot.db
+sondra-bot.db-*

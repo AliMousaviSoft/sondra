@@ -63,7 +63,12 @@ func (r *Runner) Build(mods config.ModuleFlags) {
 	if mods.Alterx || mods.Massdns {
 		add("active brute", r.runActiveBrute)
 	}
-	add("resolve", r.runResolve)
+	// resolve consumes enum output (alldomains.txt), so only run it when
+	// something enumerates — otherwise a passive URL/JS run (e.g. gowayback,
+	// jsanalysis) would hard-fail here with "no alldomains.txt".
+	if mods.Subfinder || mods.Assetfinder || mods.Crtsh || mods.Alterx || mods.Massdns {
+		add("resolve", r.runResolve)
+	}
 	if mods.Httpx {
 		add("httpx probe", r.runProbe)
 	}
@@ -75,6 +80,9 @@ func (r *Runner) Build(mods config.ModuleFlags) {
 	}
 	if mods.Gau || mods.Gowayback || mods.Katana {
 		add("url collection", r.runURLCollection)
+	}
+	if mods.JSAnalysis {
+		add("js analysis", r.runJSAnalysis)
 	}
 	// Nuclei is the slow phase — it runs AFTER recon results are reported so the
 	// pipeline delivers value in minutes instead of blocking for ~15-20m. The
@@ -271,6 +279,14 @@ func (r *Runner) runURLCollection(ctx context.Context) error {
 	result := modules.RunURLCollection(ctx, r.cfg, r.logCh)
 	if result.Error != nil {
 		r.log(tui.LogWarn, "url collection", result.Error.Error())
+	}
+	return nil
+}
+
+func (r *Runner) runJSAnalysis(ctx context.Context) error {
+	result := modules.RunJSAnalysis(ctx, r.cfg, r.logCh)
+	if result.Error != nil {
+		r.log(tui.LogWarn, "js analysis", result.Error.Error())
 	}
 	return nil
 }

@@ -91,7 +91,7 @@ func (b *Bot) doScan(r responder, cmd Command) {
 	notifier := r.notifier()
 	go func() {
 		defer b.jobs.finish(job.ID)
-		cfg, err := config.Load(b.cfgFile, cmd.Domain, cmd.Exclude, cmd.Preset, true)
+		cfg, err := config.Load(b.cfgFile, cmd.Domain, cmd.Exclude, cmd.Preset, true, false)
 		if err != nil {
 			r.reply("❌ " + label + " config: " + f.esc(err.Error()))
 			return
@@ -185,7 +185,7 @@ func (b *Bot) runMonitor(r responder, spec monitorSpec, job *Job, jobCtx context
 			r.reply("🛑 " + label + " stopped.")
 			return
 		}
-		cfg, err := config.Load(b.cfgFile, spec.Domain, spec.Exclude, spec.Preset, true)
+		cfg, err := config.Load(b.cfgFile, spec.Domain, spec.Exclude, spec.Preset, true, false)
 		if err != nil {
 			r.reply("❌ " + label + " config: " + f.esc(err.Error()))
 			return

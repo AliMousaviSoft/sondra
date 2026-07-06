@@ -19,11 +19,11 @@ func TestParseModules(t *testing.T) {
 }
 
 func TestParseModulesAliasesAndGranular(t *testing.T) {
-	m, err := ParseModules([]string{"ports", "screenshots", "nuclei-high", "wayback"})
+	m, err := ParseModules([]string{"ports", "screenshots", "nuclei-high", "wayback", "js"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.Naabu || !m.Gowitness || !m.NucleiHigh || !m.Gowayback {
+	if !m.Naabu || !m.Gowitness || !m.NucleiHigh || !m.Gowayback || !m.JSAnalysis {
 		t.Fatalf("aliases wrong: %+v", m)
 	}
 	if m.NucleiMedium {

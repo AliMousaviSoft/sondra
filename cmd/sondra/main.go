@@ -58,6 +58,7 @@ func buildScan() *cobra.Command {
 		headless   bool
 		jsonLogs   bool
 		moduleList []string
+		resume     bool
 	)
 
 	cmd := &cobra.Command{
@@ -69,7 +70,7 @@ func buildScan() *cobra.Command {
   sondra scan -d target.com -p quick --headless   # no TUI, for VPS/cron
   sondra scan -d target.com -p quick --json        # NDJSON logs to stdout`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(cfgFile, domain, excluded, preset, yes)
+			cfg, err := config.Load(cfgFile, domain, excluded, preset, yes, resume)
 			if err != nil {
 				return fmt.Errorf("config: %w", err)
 			}
@@ -126,6 +127,7 @@ func buildScan() *cobra.Command {
 	cmd.Flags().StringArrayVarP(&excluded, "exclude", "e", nil, "Subdomains to exclude")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive module selector")
 	cmd.Flags().StringSliceVar(&moduleList, "modules", nil, "Explicit module list, overrides preset (e.g. subfinder,crtsh,httpx). Skips the selector.")
+	cmd.Flags().BoolVar(&resume, "resume", false, "Reuse the latest run dir for this domain, skipping already-completed steps")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run without the interactive TUI (structured stdout; for VPS/cron)")
 	cmd.Flags().BoolVar(&jsonLogs, "json", false, "Emit newline-delimited JSON logs (implies --headless)")
 	cmd.Flags().StringVar(&cfgFile, "config", "", "Config file (default: ~/.sondra.yaml)")
@@ -294,7 +296,7 @@ func buildMonitor() *cobra.Command {
 // runner runs WITHOUT a notifier: monitor sends a single delta alert instead of
 // the per-scan summaries, so persistent findings don't re-alert every interval.
 func monitorPass(ctx context.Context, cfgFile, domain string, excluded []string, preset string, jsonLogs bool, mode string, moduleList []string) error {
-	cfg, err := config.Load(cfgFile, domain, excluded, preset, true)
+	cfg, err := config.Load(cfgFile, domain, excluded, preset, true, false)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -379,7 +381,7 @@ Config (.sondra.yaml or env):
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// A domain isn't needed to start the bot; pass a placeholder so
 			// config.Load doesn't reject it (jobs reload config per target).
-			cfg, err := config.Load(cfgFile, "bot.local", nil, "quick", true)
+			cfg, err := config.Load(cfgFile, "bot.local", nil, "quick", true, false)
 			if err != nil {
 				return fmt.Errorf("config: %w", err)
 			}
@@ -409,7 +411,7 @@ func buildReport() *cobra.Command {
 		Use:   "report",
 		Short: "Regenerate HTML report for a completed scan",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load("", domain, nil, "", true)
+			cfg, err := config.Load("", domain, nil, "", true, false)
 			if err != nil {
 				return err
 			}

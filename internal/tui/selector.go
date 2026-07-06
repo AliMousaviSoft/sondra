@@ -148,6 +148,8 @@ func (s SelectorModel) SelectedModules() config.ModuleFlags {
 			mods.Gowayback = true
 		case "katana":
 			mods.Katana = true
+		case "jsanalysis":
+			mods.JSAnalysis = true
 		case "nuclei_high":
 			mods.NucleiHigh = true
 		case "nuclei_medium":
@@ -211,7 +213,7 @@ func (s SelectorModel) View() string {
 		{"passive enumeration", []string{"subfinder", "assetfinder", "crtsh"}},
 		{"active bruteforce", []string{"alterx", "massdns"}},
 		{"http + takeover", []string{"httpx", "takeover", "naabu"}},
-		{"crawling + screenshots", []string{"gau", "katana", "gowitness"}},
+		{"crawling + screenshots", []string{"gau", "katana", "jsanalysis", "gowitness"}},
 		{"vulnerability scan", []string{"nuclei_high", "nuclei_medium"}},
 	}
 
@@ -289,6 +291,7 @@ func defaultModuleItems() []ModuleItem {
 		{ID: "gau", Name: "gau", Description: "URL collection from Wayback / CommonCrawl", Binary: "gau"},
 		{ID: "gowayback", Name: "gowaybackgo", Description: "Wayback CDX URLs (better coverage)", Binary: "gowaybackgo"},
 		{ID: "katana", Name: "katana", Description: "active crawl + JS endpoint extraction", Binary: "katana"},
+		{ID: "jsanalysis", Name: "js analysis", Description: "extract endpoints + secrets from collected JS", Binary: ""}, // HTTP + regex
 		{ID: "gowitness", Name: "gowitness", Description: "headless screenshots of live hosts", Binary: "gowitness"},
 		{ID: "nuclei_high", Name: "nuclei (crit/high)", Description: "targeted templates: cves, misconfig, exposures", Binary: "nuclei"},
 		{ID: "nuclei_medium", Name: "nuclei (medium)", Description: "background scan — runs async until report", Binary: "nuclei"},
@@ -309,6 +312,7 @@ func applyPreset(items []ModuleItem, mods config.ModuleFlags) {
 		"gau":           mods.Gau,
 		"gowayback":     mods.Gowayback,
 		"katana":        mods.Katana,
+		"jsanalysis":    mods.JSAnalysis,
 		"gowitness":     mods.Gowitness,
 		"nuclei_high":   mods.NucleiHigh,
 		"nuclei_medium": mods.NucleiMedium,

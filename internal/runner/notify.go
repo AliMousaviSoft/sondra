@@ -557,7 +557,9 @@ func activeModuleNames(m config.ModuleFlags) []string {
 	add(m.Naabu, "naabu")
 	add(m.Gowitness, "gowitness")
 	add(m.Gau, "gau")
+	add(m.Gowayback, "gowayback")
 	add(m.Katana, "katana")
+	add(m.JSAnalysis, "js-analysis")
 	add(m.NucleiHigh, "nuclei-high")
 	add(m.NucleiMedium, "nuclei-medium")
 	return names

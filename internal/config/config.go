@@ -54,6 +54,7 @@ type Config struct {
 	Excluded        []string
 	Concurrency     int
 	RateLimit       int
+	WaybackRate     int // gowaybackgo CDX requests/sec (Wayback 429s easily)
 	Timeout         time.Duration
 	CacheAge        time.Duration
 	ResolversFile   string
@@ -149,6 +150,7 @@ type ModuleFlags struct {
 	Gau          bool
 	Gowayback    bool
 	Katana       bool
+	JSAnalysis   bool
 	NucleiHigh   bool
 	NucleiMedium bool
 }
@@ -159,12 +161,13 @@ type ModuleFlags struct {
 //  3. .sondra.yaml in the current directory
 //  4. Environment variables (SONDRA_ prefix)
 //  5. CLI flags passed in (domain, excluded, preset)
-func Load(cfgFile, domain string, excluded []string, preset string, skipSelector bool) (*Config, error) {
+func Load(cfgFile, domain string, excluded []string, preset string, skipSelector, resume bool) (*Config, error) {
 	v := viper.New()
 
 	// ── defaults ──────────────────────────────────────────────────────────
 	v.SetDefault("concurrency", 50)
 	v.SetDefault("rate_limit", 150)
+	v.SetDefault("wayback_rate", 2) // web.archive.org 429s hard on big domains; go low
 	v.SetDefault("timeout", "10s")
 	v.SetDefault("cache_age", "24h")
 	v.SetDefault("resolvers_file", "")
@@ -216,7 +219,15 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 	if domain == "" {
 		return nil, fmt.Errorf("domain is required")
 	}
-	outputDir := buildOutputDir(v.GetString("output_base"), domain)
+	// --resume continues the most recent run dir so per-step caches (CacheValid
+	// / cache_age) can skip already-completed work; otherwise start a fresh dir.
+	outputDir := ""
+	if resume {
+		outputDir = latestRunDir(v.GetString("output_base"), domain)
+	}
+	if outputDir == "" {
+		outputDir = buildOutputDir(v.GetString("output_base"), domain)
+	}
 
 	// fmt.Println("Config file used:", v.ConfigFileUsed())
 	// fmt.Printf("DEBUG resolvers_file raw: '%s'\n", v.GetString("resolvers_file"))
@@ -228,6 +239,7 @@ func Load(cfgFile, domain string, excluded []string, preset string, skipSelector
 		Excluded:        excluded,
 		Concurrency:     v.GetInt("concurrency"),
 		RateLimit:       v.GetInt("rate_limit"),
+		WaybackRate:     v.GetInt("wayback_rate"),
 		Timeout:         timeout,
 		CacheAge:        cacheAge,
 		ResolversFile:   v.GetString("resolvers_file"),
@@ -299,6 +311,8 @@ func ParseModules(names []string) (ModuleFlags, error) {
 			m.Gowayback = true
 		case "katana":
 			m.Katana = true
+		case "js", "jsanalysis", "js-analysis", "secrets":
+			m.JSAnalysis = true
 		case "nuclei":
 			m.NucleiHigh, m.NucleiMedium = true, true
 		case "nuclei-high", "nucleihigh":
@@ -310,7 +324,7 @@ func ParseModules(names []string) (ModuleFlags, error) {
 		}
 	}
 	if len(unknown) > 0 {
-		return m, fmt.Errorf("unknown module(s): %s (valid: subfinder, assetfinder, crtsh, alterx, massdns, httpx, takeover, naabu, gowitness, gau, gowayback, katana, nuclei, nuclei-high, nuclei-medium)", strings.Join(unknown, ", "))
+		return m, fmt.Errorf("unknown module(s): %s (valid: subfinder, assetfinder, crtsh, alterx, massdns, httpx, takeover, naabu, gowitness, gau, gowayback, katana, jsanalysis, nuclei, nuclei-high, nuclei-medium)", strings.Join(unknown, ", "))
 	}
 	return m, nil
 }
@@ -343,9 +357,30 @@ func PresetModules(preset string) ModuleFlags {
 			Alterx: true, Massdns: true,
 			Httpx: true, Takeover: true, Naabu: true,
 			Gowitness: true, Gau: true, Gowayback: true, Katana: true,
+			JSAnalysis: true,
 			NucleiHigh: true, NucleiMedium: true,
 		}
 	}
+}
+
+// latestRunDir returns the most recent recon-* directory for a domain (run dirs
+// sort chronologically by their timestamp name), or "" if none exists. Used by
+// --resume to continue a prior run instead of starting a fresh one.
+func latestRunDir(base, domain string) string {
+	entries, err := os.ReadDir(filepath.Join(base, domain))
+	if err != nil {
+		return ""
+	}
+	var latest string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "recon-") && e.Name() > latest {
+			latest = e.Name()
+		}
+	}
+	if latest == "" {
+		return ""
+	}
+	return filepath.Join(base, domain, latest)
 }
 
 // buildOutputDir constructs a timestamped output directory path.

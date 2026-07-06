@@ -170,10 +170,15 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 		return Result{Name: "url collection", Count: count, Output: allURLs}
 	}
 
+	// gau and gowayback query the domain directly; only katana needs a live-host
+	// list. Don't abort URL collection just because httpx didn't run.
 	liveFile := filepath.Join(cfg.OutputDir, "live.txt")
-	hosts, err := readLines(liveFile)
-	if err != nil || len(hosts) == 0 {
-		return Result{Name: "url collection", Error: fmt.Errorf("no live hosts for URL collection")}
+	hosts, _ := readLines(liveFile)
+	if cfg.Modules.Katana && len(hosts) == 0 {
+		if !cfg.Modules.Gau && !cfg.Modules.Gowayback {
+			return Result{Name: "url collection", Error: fmt.Errorf("no live hosts — katana needs httpx-probed hosts")}
+		}
+		sendLog(log, tui.LogWarn, "katana", "no live hosts — skipping (gau/gowayback run on the domain)")
 	}
 
 	var allLines []string
@@ -210,7 +215,7 @@ func RunURLCollection(ctx context.Context, cfg *config.Config, log chan<- tui.Lo
 		}()
 	}
 
-	if cfg.Modules.Katana {
+	if cfg.Modules.Katana && len(hosts) > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -290,12 +295,24 @@ func runGoWayback(ctx context.Context, cfg *config.Config, log chan<- tui.LogEnt
 	}
 
 	outFile := filepath.Join(cfg.OutputDir, "wayback-data", "gowaybackgo.txt")
+
+	rate := cfg.WaybackRate
+	if rate <= 0 {
+		rate = 2
+	}
+	// Wayback's CDX API 429s aggressively: cap requests/sec AND keep concurrent
+	// page fetchers ≤ rate so we don't burst past it (gowaybackgo defaults
+	// page-workers to 10). Tune via `wayback_rate` in the config.
+	//
+	// Deliberately NO --timeout: cfg.Timeout (a short per-host probe budget, ~10s)
+	// starves the slow CDX page-count query and surfaces as a DNS/i-o timeout.
+	// gowaybackgo's own 80s default is the right bound here.
 	cmd := exec.CommandContext(ctx, "gowaybackgo",
 		"-u", cfg.Domain,
 		"--exclude-defaults",
 		"-o", outFile,
-		"--rate", "10",
-		"--timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
+		"--rate", fmt.Sprintf("%d", rate),
+		"--page-workers", fmt.Sprintf("%d", rate),
 	)
 
 	var stderr bytes.Buffer

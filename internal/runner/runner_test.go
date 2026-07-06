@@ -36,6 +36,38 @@ func newTestRunner(t *testing.T, rec notify.Notifier) *Runner {
 
 func noopStep(context.Context) error { return nil }
 
+func stepNames(r *Runner) string {
+	var names []string
+	for _, s := range r.steps {
+		names = append(names, s.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+// A passive URL/JS run has no enum source, so resolve (which needs enum output)
+// must be skipped — otherwise it hard-fails on a missing alldomains.txt.
+func TestBuildSkipsResolveWithoutEnum(t *testing.T) {
+	r := newTestRunner(t, nil)
+	r.Build(config.ModuleFlags{Gowayback: true, JSAnalysis: true})
+	names := stepNames(r)
+	if strings.Contains(names, "resolve") {
+		t.Errorf("resolve should be skipped without an enum source; steps=%s", names)
+	}
+	for _, want := range []string{"url collection", "js analysis"} {
+		if !strings.Contains(names, want) {
+			t.Errorf("missing step %q; steps=%s", want, names)
+		}
+	}
+}
+
+func TestBuildKeepsResolveWithEnum(t *testing.T) {
+	r := newTestRunner(t, nil)
+	r.Build(config.ModuleFlags{Subfinder: true, Httpx: true})
+	if names := stepNames(r); !strings.Contains(names, "resolve") {
+		t.Errorf("resolve should run when an enum source is present; steps=%s", names)
+	}
+}
+
 // A run with a vuln phase must emit two notifications in order:
 // recon-done first, then the final scan-complete summary.
 func TestRunSyncTwoPhaseNotifications(t *testing.T) {

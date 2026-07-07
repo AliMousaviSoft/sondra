@@ -266,17 +266,24 @@ func runGau(ctx context.Context, cfg *config.Config, log chan<- tui.LogEntry) ([
 	}
 
 	gauFile := filepath.Join(cfg.OutputDir, "wayback-data", "gau.txt")
-	cmd := exec.CommandContext(ctx, gauBin,
+	args := []string{
 		"--threads", "5",
 		"--timeout", fmt.Sprintf("%d", int(cfg.Timeout.Seconds())),
 		"--o", gauFile,
 		cfg.Domain,
-	)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gau: %w — %s", err, stderr.String())
+	}
+	// gau hits Wayback/CommonCrawl and can fail transiently — retry the run
+	// (recreating the Cmd each attempt, since a Cmd can only be Run once).
+	if err := retry(ctx, 2, 2*time.Second, func() error {
+		var stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, gauBin, args...)
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("gau: %w — %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	lines, err := readLines(gauFile)

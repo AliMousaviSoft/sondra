@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/AliMousaviSoft/sondra/internal/bot"
 	"github.com/AliMousaviSoft/sondra/internal/config"
+	"github.com/AliMousaviSoft/sondra/internal/doctor"
 	"github.com/AliMousaviSoft/sondra/internal/notify"
 	"github.com/AliMousaviSoft/sondra/internal/report"
 	"github.com/AliMousaviSoft/sondra/internal/runner"
@@ -29,6 +31,26 @@ var (
 	date    = "unknown"
 )
 
+// init falls back to the module version Go embeds in the binary when the
+// ldflags version wasn't set (i.e. not a goreleaser build), so `go install
+// ...@v1.7.5` reports 1.7.5 instead of "dev". It only trusts a clean released
+// version — "(devel)" and dirty local trees keep reporting "dev" (which the
+// banner treats as up-to-date).
+func init() {
+	if version != "dev" {
+		return
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	v := bi.Main.Version
+	if v == "" || v == "(devel)" || strings.Contains(v, "dirty") {
+		return
+	}
+	version = strings.TrimPrefix(v, "v")
+}
+
 func main() {
 	root := buildRoot()
 	if err := root.Execute(); err != nil {
@@ -39,12 +61,43 @@ func main() {
 
 func buildRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "sondra",
-		Short:         "sondra — automated bug bounty recon pipeline",
+		Use:   "sondra",
+		Short: "sondra — automated bug bounty recon pipeline",
+		Long: `sondra — automated bug bounty recon pipeline
+
+Orchestrates subdomain enumeration, DNS/HTTP probing, port scanning, URL
+collection, JS endpoint/secret analysis, screenshots, and nuclei into one
+pipeline — with a filterable HTML report on every run. Use it as an interactive
+TUI, a headless job for a VPS/cron, a continuous monitor, or a Telegram/Discord
+control bot.
+
+Presets: full · quick · passive · enum · vuln   (override with --modules).
+Run "sondra <command> --help" for a command's flags (e.g. sondra scan --help).`,
+		Example: `  # First look — fast, no prompts
+  sondra scan -d target.com -p quick -y
+
+  # Go deep, reusing what the quick scan already did
+  sondra scan -d target.com -p full -y --resume
+
+  # Passive URL + JS secret mining (no enumeration needed)
+  sondra scan -d target.com --modules gau,jsanalysis -y
+
+  # Pick modules interactively
+  sondra scan -d target.com
+
+  # Watch the attack surface, alert only on new findings
+  sondra monitor -d target.com --interval 6h --on findings
+
+  # Drive scans/monitors from Telegram or Discord
+  sondra bot
+
+  # Regenerate the report / show new subdomains vs the last run
+  sondra report -d target.com
+  sondra diff   -d target.com`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(buildScan(), buildMonitor(), buildBot(), buildReport(), buildDiff(), buildVersion(), buildUpdate())
+	root.AddCommand(buildScan(), buildMonitor(), buildBot(), buildReport(), buildDiff(), buildDoctor(), buildVersion(), buildUpdate())
 	return root
 }
 
@@ -453,6 +506,25 @@ func buildDiff() *cobra.Command {
 
 	cmd.Flags().StringVarP(&domain, "domain", "d", "", "Target domain (required)")
 	_ = cmd.MarkFlagRequired("domain")
+	return cmd
+}
+
+func buildDoctor() *cobra.Command {
+	var cfgFile string
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Check external tools, nuclei templates, and config are ready",
+		Long: `doctor probes every external tool sondra shells out to, reports which are
+installed (and their versions), shows which presets are runnable, and checks
+nuclei templates + notification/bot config — so missing dependencies surface
+before a scan instead of failing mid-run.
+
+Exit code is non-zero if any external tool is missing (handy for CI/cron).`,
+		Run: func(cmd *cobra.Command, args []string) {
+			os.Exit(doctor.Run(cfgFile))
+		},
+	}
+	cmd.Flags().StringVar(&cfgFile, "config", "", "Config file (default: ~/.sondra.yaml)")
 	return cmd
 }
 

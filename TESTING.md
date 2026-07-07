@@ -81,6 +81,7 @@ checklist**; the automated `go test` suite covers the pure logic.
 | 5.2 | Inspect `endpoints.txt` | Absolute URLs + rooted API paths; no `.css/.png/.woff` static assets |
 | 5.3 | Inspect `secrets.txt` | Any AWS/Google/Slack/GitHub/Stripe/JWT/private-key matches, tab-separated with source URL |
 | 5.4 | Automated | `go test ./internal/modules -run Extract` passes (endpoints, secrets, no-false-positives) |
+| 5.5 | Open `master_report.html` after a jsanalysis run | **JS Analysis** section shows a secrets table (type · value · source) + collapsible endpoints; grid has a "js secrets" stat (red if >0) |
 
 ---
 
@@ -137,6 +138,8 @@ checklist**; the automated `go test` suite covers the pure logic.
 | 10.1 | `Ctrl-C` mid-scan | Clean cancellation; partial results saved; no panic |
 | 10.2 | Missing external tool for a selected module | Clear "not in PATH — install: …" message, not a crash |
 | 10.3 | No network | Modules fail gracefully with warnings; scan doesn't hang indefinitely |
+| 10.4 | `Ctrl-C` during crt.sh / a retry backoff | Returns promptly (no ~6s hang) — retry backoff is ctx-aware |
+| 10.5 | Automated | `go test ./internal/modules -run Retry` (success-after-failures, exhaustion, cancel-returns-immediately) |
 
 ---
 

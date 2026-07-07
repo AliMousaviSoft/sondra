@@ -95,6 +95,7 @@ sondra bot                             # run the Telegram/Discord control bot
 | `bot` | Telegram/Discord control daemon | `--config` |
 | `report` | Regenerate the HTML report | `-d`, `--dir` |
 | `diff` | Show new subdomains vs the last run | `-d` |
+| `doctor` | Preflight-check tools, templates, and config | — |
 | `version` | Print version + update status | — |
 | `update` | Check for / apply a self-update | — |
 
@@ -393,7 +394,18 @@ Commands (Telegram text · Discord slash):
 
 ### External tools (exec — install separately)
 
-`sondra` checks for a selected module's binary at runtime and warns if it's missing:
+Run **`sondra doctor`** to see what's installed, tool versions, which presets are runnable, and whether templates/notify/bot config are set up — it exits non-zero if anything's missing (handy for CI/cron):
+
+```
+$ sondra doctor
+Recon tools
+  ✓ httpx        1.9.0
+  ✗ naabu        NOT FOUND → go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+Presets
+  ✗ enum     needs naabu
+```
+
+`sondra` also checks for a selected module's binary at runtime and warns if it's missing:
 
 ```bash
 # DNS + HTTP probing

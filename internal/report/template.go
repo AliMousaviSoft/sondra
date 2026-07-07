@@ -164,6 +164,7 @@ func reportTemplate() string {
   <div class="stat"><span class="stat-val" style="color:{{ if gt .TakeoverCount 0 }}#e84855{{ else }}#39d353{{ end }}">{{ .TakeoverCount }}</span><span class="stat-label">takeovers</span></div>
   <div class="stat"><span class="stat-val">{{ .URLCount }}</span><span class="stat-label">urls collected</span></div>
   <div class="stat"><span class="stat-val">{{ .JSCount }}</span><span class="stat-label">js files</span></div>
+  <div class="stat"><span class="stat-val" style="color:{{ if gt .JSSecretCount 0 }}#e84855{{ else }}#39d353{{ end }}">{{ .JSSecretCount }}</span><span class="stat-label">js secrets</span></div>
   <div class="stat"><span class="stat-val">{{ .PortCount }}</span><span class="stat-label">open ports</span></div>
   <div class="stat"><span class="stat-val">{{ len .HighValue }}</span><span class="stat-label">high-value targets</span></div>
 </div>
@@ -196,6 +197,40 @@ func reportTemplate() string {
   </table>
   {{ else }}<div class="empty">no findings</div>{{ end }}
 </section>
+
+<!-- JS analysis (endpoints + secrets) -->
+{{ if or .JSSecrets .JSEndpoints }}
+<section>
+  <h2>JS Analysis</h2>
+  {{ if .JSSecrets }}
+  <table>
+    <thead><tr><th>Secret Type</th><th>Value</th><th>Source JS</th></tr></thead>
+    <tbody>
+    {{ range .JSSecrets }}
+    <tr class="hv">
+      <td><span class="sev-high">{{ .Type }}</span></td>
+      <td>{{ .Value }}</td>
+      <td><a href="{{ .Source }}" target="_blank">{{ .Source }}</a></td>
+    </tr>
+    {{ end }}
+    </tbody>
+  </table>
+  {{ else }}<div class="empty">no secrets found in JS</div>{{ end }}
+  {{ if .JSEndpoints }}
+  <details style="margin-top:16px;">
+    <summary style="cursor:pointer;color:var(--muted);padding:4px 0;">{{ .JSEndpointCount }} endpoints extracted from JS</summary>
+    <table style="margin-top:8px;">
+      <thead><tr><th>Endpoint</th></tr></thead>
+      <tbody>
+      {{ range .JSEndpoints }}
+      <tr><td>{{ . }}</td></tr>
+      {{ end }}
+      </tbody>
+    </table>
+  </details>
+  {{ end }}
+</section>
+{{ end }}
 
 <!-- High-value targets -->
 {{ if .HighValue }}

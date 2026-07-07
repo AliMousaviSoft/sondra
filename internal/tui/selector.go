@@ -285,9 +285,9 @@ func defaultModuleItems() []ModuleItem {
 		{ID: "crtsh", Name: "crt.sh", Description: "certificate transparency HTTP query", Binary: ""}, // HTTP call
 		{ID: "alterx", Name: "alterx", Description: "permutation-based subdomain generation", Binary: "alterx"},
 		{ID: "massdns", Name: "massdns", Description: "high-speed DNS brute force", Binary: "massdns"},
-		{ID: "httpx", Name: "httpx", Description: "2-phase probe: alive check + enrichment", Binary: ""}, // Go lib
+		{ID: "httpx", Name: "httpx", Description: "2-phase probe: alive check + enrichment", Binary: "httpx"},
 		{ID: "takeover", Name: "nuclei takeover", Description: "subdomain takeover fingerprinting", Binary: "nuclei"},
-		{ID: "naabu", Name: "naabu", Description: "port scanner for non-standard ports", Binary: ""}, // Go lib
+		{ID: "naabu", Name: "naabu", Description: "port scanner for non-standard ports", Binary: "naabu"},
 		{ID: "gau", Name: "gau", Description: "URL collection from Wayback / CommonCrawl", Binary: "gau"},
 		{ID: "gowayback", Name: "gowaybackgo", Description: "Wayback CDX URLs (better coverage)", Binary: "gowaybackgo"},
 		{ID: "katana", Name: "katana", Description: "active crawl + JS endpoint extraction", Binary: "katana"},

@@ -194,10 +194,21 @@ func runSubfinder(ctx context.Context, cfg *config.Config) ([]string, error) {
 // ──────────────────────────────────────────────
 
 func execAssetfinder(ctx context.Context, domain string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "assetfinder", "--subs-only", domain)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("assetfinder exec: %w", err)
+	if _, err := exec.LookPath("assetfinder"); err != nil {
+		return nil, fmt.Errorf("assetfinder not in PATH")
+	}
+	// assetfinder queries cert-transparency + web archives, which flake — retry
+	// the run (but not the missing-binary case above).
+	var out []byte
+	if err := retry(ctx, 2, 2*time.Second, func() error {
+		var e error
+		out, e = exec.CommandContext(ctx, "assetfinder", "--subs-only", domain).Output()
+		if e != nil {
+			return fmt.Errorf("assetfinder exec: %w", e)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return splitLines(string(out)), nil
 }
@@ -216,46 +227,37 @@ func queryCrtsh(ctx context.Context, domain string) ([]string, error) {
 	client := &http.Client{Timeout: 45 * time.Second}
 
 	var body []byte
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt*3) * time.Second)
-		}
-
+	err := retry(ctx, 3, 3*time.Second, func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; sondra-recon/1.0)")
 		req.Header.Set("Accept", "application/json")
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("crt.sh request: %w", err)
-			continue
+			return fmt.Errorf("crt.sh request: %w", err)
 		}
+		defer resp.Body.Close()
 
+		if resp.StatusCode >= 500 {
+			return fmt.Errorf("crt.sh HTTP %d", resp.StatusCode)
+		}
 		ct := resp.Header.Get("Content-Type")
-		body, err = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-		resp.Body.Close()
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		if err != nil {
-			lastErr = fmt.Errorf("crt.sh read: %w", err)
-			continue
+			return fmt.Errorf("crt.sh read: %w", err)
 		}
-
-		// If we got HTML back (rate limit / challenge page), retry.
-		if strings.Contains(ct, "text/html") || (len(body) > 0 && body[0] == '<') {
-			lastErr = fmt.Errorf("crt.sh returned HTML (rate limited), attempt %d/3", attempt+1)
-			continue
+		// HTML back = rate-limit / challenge page → retry.
+		if strings.Contains(ct, "text/html") || (len(b) > 0 && b[0] == '<') {
+			return fmt.Errorf("crt.sh returned HTML (rate limited)")
 		}
-
-		// Got JSON.
-		lastErr = nil
-		break
-	}
-
-	if lastErr != nil {
-		return nil, lastErr
+		body = b
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	if len(body) == 0 {
 		return nil, fmt.Errorf("crt.sh returned empty response")

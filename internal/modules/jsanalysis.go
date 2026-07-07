@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AliMousaviSoft/sondra/internal/config"
 	"github.com/AliMousaviSoft/sondra/internal/tui"
@@ -200,8 +201,15 @@ func fetchJS(ctx context.Context, client *http.Client, url string) (string, erro
 		return "", err
 	}
 	req.Header.Set("User-Agent", "sondra-js-analysis")
-	resp, err := client.Do(req)
-	if err != nil {
+
+	// Retry only transient network errors — a 4xx/5xx means the URL is dead
+	// (common for archived .js), so retrying it would just waste requests.
+	var resp *http.Response
+	if err := retry(ctx, 2, 500*time.Millisecond, func() error {
+		var e error
+		resp, e = client.Do(req.Clone(ctx))
+		return e
+	}); err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()

@@ -1,11 +1,37 @@
 package modules
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// retry runs fn up to attempts times with ctx-aware exponential backoff
+// (base, 2×base, 4×base, …). It returns nil on the first success, the last
+// error after exhausting attempts, or ctx.Err() if the context is cancelled —
+// so a SIGINT never blocks inside a backoff sleep.
+func retry(ctx context.Context, attempts int, base time.Duration, fn func() error) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(base << (i - 1)): // base, 2×base, 4×base…
+			}
+		}
+		if err = fn(); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	return err
+}
 
 // isDir returns true if path is an existing directory.
 func isDir(path string) bool {

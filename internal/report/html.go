@@ -19,23 +19,27 @@ import (
 
 // ReportData is the template input struct.
 type ReportData struct {
-	Domain         string
-	Date           time.Time
-	ModulesRan     []string
-	SubdomainCount int
-	LiveCount      int
-	NucleiHits     int
-	TakeoverCount  int
-	URLCount       int
-	JSCount        int
-	PortCount      int
-	StatusCodes    map[int]int
-	LiveHosts      []HostEntry
-	Findings       []NucleiFinding
-	Takeovers      []string
-	NewSubdomains  []string
-	OpenPorts      []string
-	HighValue      []string
+	Domain          string
+	Date            time.Time
+	ModulesRan      []string
+	SubdomainCount  int
+	LiveCount       int
+	NucleiHits      int
+	TakeoverCount   int
+	URLCount        int
+	JSCount         int
+	PortCount       int
+	StatusCodes     map[int]int
+	LiveHosts       []HostEntry
+	Findings        []NucleiFinding
+	Takeovers       []string
+	NewSubdomains   []string
+	OpenPorts       []string
+	HighValue       []string
+	JSEndpoints     []string
+	JSSecrets       []JSSecret
+	JSEndpointCount int
+	JSSecretCount   int
 }
 
 // HostEntry is one live HTTP host for the report table.
@@ -46,6 +50,13 @@ type HostEntry struct {
 	Technologies []string
 	WebServer    string
 	HighValue    bool
+}
+
+// JSSecret is a credential-like match extracted from collected JavaScript.
+type JSSecret struct {
+	Type   string
+	Value  string
+	Source string
 }
 
 // NucleiFinding represents a nuclei JSONL result line.
@@ -169,6 +180,12 @@ func collectData(cfg *config.Config) (*ReportData, error) {
 		d.JSCount = len(lines)
 	}
 
+	// JS analysis — endpoints + secrets extracted from collected JS.
+	d.JSEndpoints, _ = readLines(filepath.Join(cfg.OutputDir, "js-analysis", "endpoints.txt"))
+	d.JSEndpointCount = len(d.JSEndpoints)
+	d.JSSecrets = parseJSSecrets(filepath.Join(cfg.OutputDir, "js-analysis", "secrets.txt"))
+	d.JSSecretCount = len(d.JSSecrets)
+
 	// New subdomains (diff from previous run).
 	d.NewSubdomains, _ = readLines(filepath.Join(cfg.OutputDir, "new_subdomains.txt"))
 
@@ -269,6 +286,30 @@ func severityRank(s string) int {
 // ──────────────────────────────────────────────
 // File helpers (local to report package)
 // ──────────────────────────────────────────────
+
+// parseJSSecrets reads js-analysis/secrets.txt lines of the form
+// "[Type] Value\tSourceURL" written by the jsanalysis module.
+func parseJSSecrets(path string) []JSSecret {
+	lines, err := readLines(path)
+	if err != nil {
+		return nil
+	}
+	out := make([]JSSecret, 0, len(lines))
+	for _, l := range lines {
+		typ, rest := "", l
+		if strings.HasPrefix(l, "[") {
+			if i := strings.Index(l, "] "); i >= 0 {
+				typ, rest = l[1:i], l[i+2:]
+			}
+		}
+		val, src := rest, ""
+		if i := strings.IndexByte(rest, '\t'); i >= 0 {
+			val, src = rest[:i], rest[i+1:]
+		}
+		out = append(out, JSSecret{Type: typ, Value: val, Source: src})
+	}
+	return out
+}
 
 func readLines(path string) ([]string, error) {
 	f, err := os.Open(path)
